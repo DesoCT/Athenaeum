@@ -1,0 +1,68 @@
+# Fixture workspace used by acceptance tests A1-A3 and by `make dev`.
+#
+# This file also serves as the worked example of spec 05 section 2.
+
+schema_version = 1
+name = "Athenaeum Fixture"
+root = "workspace"
+
+include = [
+  "README.md",
+  "docs/**/*.md",
+]
+
+exclude = [
+  "**/node_modules/**",
+  "**/vendor/**",
+  ".git/**",
+]
+
+[documents]
+raw_html = false
+wiki_links = true
+footnotes = true
+callouts = true
+math = true
+mermaid = true
+front_matter = ["yaml", "toml"]
+max_editable_bytes = 10485760
+large_file_warning_bytes = 2097152
+
+[assets]
+directory = "assets"
+allow_remote = true
+paste_naming = "date-hash"
+
+[annotations]
+shared_directory = ".athenaeum/shared"
+default_visibility = "personal"
+
+[search]
+enabled = true
+index_code_blocks = true
+index_front_matter = true
+
+[git]
+enabled = true
+
+[security]
+writable = [
+  "README.md",
+  "docs/**/*.md",
+  "assets/**",
+  ".athenaeum/shared/**",
+]
+allow_external_reads = false
+
+[[groups]]
+id = "design"
+title = "Design"
+patterns = ["docs/design/**/*.md"]
+
+[[groups]]
+id = "operations"
+title = "Operations"
+patterns = ["docs/operations/**/*.md"]
+
+[relationships.front_matter]
+fields = ["related", "implements", "supersedes"]

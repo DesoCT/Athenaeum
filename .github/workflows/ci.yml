@@ -1,0 +1,60 @@
+# CI for the v0.1 release platforms (D-021). Every acceptance run must pass on
+# both macOS and Linux before a release candidate is accepted.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CGO_ENABLED: "0"
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: cd web && npm ci
+
+      - name: Lint
+        run: make lint
+
+      - name: Type-check frontend
+        run: make test-web
+
+      - name: Go tests
+        run: make test-go
+
+      - name: Build release binary
+        run: make build
+
+      - name: Acceptance tests (A1-A3)
+        run: make test-acceptance
+
+      # Guards the exclusions in spec 01 section 6 and acceptance L. A release
+      # must contain no chat, AI, MCP, embedding, or Git-mutation code.
+      - name: Exclusion check
+        run: ./scripts/check-exclusions.sh

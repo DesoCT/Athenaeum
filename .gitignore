@@ -1,0 +1,26 @@
+# Build outputs
+/bin/
+/dist/
+
+# Compiled frontend. Only .gitkeep is tracked; the Makefile builds dist/ before
+# the Go binary so go:embed always has a directory to embed.
+/web/dist/*
+!/web/dist/.gitkeep
+
+# Frontend dependencies
+/web/node_modules/
+
+# Go
+*.test
+*.out
+
+# Editor and OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Athenaeum's own sidecars, if this repository is ever opened as a workspace.
+# Shared sidecars under .athenaeum/shared/ are intended to be committed
+# (spec 03 section 1), so only local state is ignored here.
+/.athenaeum/local/

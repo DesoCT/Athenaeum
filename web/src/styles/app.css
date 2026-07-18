@@ -1,0 +1,93 @@
+/*
+ * Athenaeum visual baseline (spec 04 section 1): a dark plotting table with
+ * warm paper surfaces, restrained grid cues, and precise status markings.
+ *
+ * Contrast pairs here target WCAG 2.2 AA (requirement N5).
+ */
+
+:root {
+  /* Plotting table */
+  --surface-table: #14161a;
+  --surface-panel: #1b1e24;
+  --surface-raised: #222630;
+
+  /* Warm paper */
+  --surface-paper: #f4efe6;
+  --ink: #1c1a17;
+
+  --text-primary: #e8e4dc;
+  --text-secondary: #a8a49c;
+  --text-muted: #7b7871;
+
+  --line: #2c313b;
+  --line-strong: #3a4150;
+
+  /* Status markings */
+  --accent: #c9a227;
+  --ok: #6fae7d;
+  --warn: #d99a3f;
+  --danger: #d2685f;
+
+  --focus: #7fb3e8;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --radius: 4px;
+  --gap: 1rem;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--surface-table);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+#app {
+  height: 100%;
+}
+
+/* Focus must always be visible (spec 04 section 15). */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Honour reduced-motion preferences (spec 04 section 15). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
