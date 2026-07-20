@@ -16,6 +16,31 @@ Annotations, notes, relationships, and the Git panel follow in later phases.
 Measured startup, responsiveness, and scale numbers are in
 [docs/measurements.md](docs/measurements.md).
 
+## Screenshots
+
+The Map Room: file tree, document groups, recent documents, and configuration
+diagnostics. No chat, no prompts, no generated summaries.
+
+![The Map Room](docs/screenshots/map-room.png)
+
+A rendered document. GitHub Flavoured Markdown with callouts, wiki links,
+mathematics, syntax highlighting, and Mermaid diagrams — all sanitised, with
+raw HTML off by default.
+
+![A rendered document](docs/screenshots/document.png)
+
+Split editing. Source on the left, live preview of the buffer on the right, so
+unsaved work is visible before it reaches disk. Saves are atomic and
+version-checked.
+
+![Split editing](docs/screenshots/split-editing.png)
+
+Workspace search. Lexical full-text search with snippets, matched-term
+highlighting, and filters for path, document group, and Git state. The index is
+a disposable cache: deleting it loses nothing.
+
+![Workspace search](docs/screenshots/search.png)
+
 ## Requirements
 
 - Go 1.26 or newer
