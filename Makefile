@@ -77,6 +77,10 @@ SCALE_DIR ?= $(HOME)/.cache/athenaeum-scale-fixture
 test-scale: ## Generate the 5,000-document fixture and measure N1-N3
 	ATHENAEUM_SCALE=1 ATHENAEUM_SCALE_DIR=$(SCALE_DIR) \
 		$(GO) test ./test/scale/... -count=1 -v -timeout 60m
+	@echo ""
+	@echo "For acceptance F4 in a browser, serve the fixture and run the scale spec:"
+	@echo "  ./bin/athenaeum serve $(SCALE_DIR)/athenaeum.toml --port 7971 --no-open"
+	@echo "  cd web && ATHENAEUM_SCALE_URL=\"<bootstrap URL>\" npx playwright test e2e/scale.spec.ts"
 
 .PHONY: lint
 lint: ## Vet Go sources and check formatting
