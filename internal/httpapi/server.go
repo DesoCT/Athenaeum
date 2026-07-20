@@ -12,6 +12,7 @@ import (
 
 	"athenaeum/internal/assets"
 	"athenaeum/internal/documents"
+	"athenaeum/internal/search"
 	"athenaeum/internal/security"
 	"athenaeum/internal/session"
 	"athenaeum/internal/watcher"
@@ -45,6 +46,12 @@ type Options struct {
 	Assets *assets.Service
 	// Watcher feeds the change stream. Nil disables /events.
 	Watcher *watcher.Watcher
+	// Search answers queries against the disposable FTS projection (R7).
+	// Nil means search is disabled or unavailable; every other route still
+	// works, because search is a projection and never a prerequisite (C1, C2).
+	Search *search.Service
+	// SessionState persists open tabs and layout (R13).
+	SessionState *session.StateStore
 }
 
 // Server routes API and frontend requests behind the session and origin
@@ -79,6 +86,13 @@ func (s *Server) routes() {
 	s.mux.Handle("POST "+APIPrefix+"/assets", s.guard(http.HandlerFunc(s.handleAssetStore)))
 	// Serves workspace images to the preview (R3, spec 03 section 9).
 	s.mux.Handle("GET "+APIPrefix+"/assets/{id...}", s.guard(http.HandlerFunc(s.handleAssetServe)))
+	// Search sits behind the same session and origin guard as every other route
+	// (ADR-0002); the query string is never logged (spec 03 section 12).
+	s.mux.Handle("GET "+APIPrefix+"/search", s.guard(http.HandlerFunc(s.handleSearch)))
+	s.mux.Handle("GET "+APIPrefix+"/search/status", s.guard(http.HandlerFunc(s.handleSearchStatus)))
+	s.mux.Handle("POST "+APIPrefix+"/search/rebuild", s.guard(http.HandlerFunc(s.handleSearchRebuild)))
+	s.mux.Handle("GET "+APIPrefix+"/session", s.guard(http.HandlerFunc(s.handleSessionGet)))
+	s.mux.Handle("PUT "+APIPrefix+"/session", s.guard(http.HandlerFunc(s.handleSessionPut)))
 	s.mux.Handle("GET "+APIPrefix+"/recovery", s.guard(http.HandlerFunc(s.handleRecoveryList)))
 	s.mux.Handle("PUT "+APIPrefix+"/recovery", s.guard(http.HandlerFunc(s.handleRecoveryPut)))
 	s.mux.Handle("DELETE "+APIPrefix+"/recovery/{id...}", s.guard(http.HandlerFunc(s.handleRecoveryDelete)))

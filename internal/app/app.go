@@ -18,7 +18,9 @@ import (
 	"athenaeum/internal/assets"
 	"athenaeum/internal/config"
 	"athenaeum/internal/documents"
+	"athenaeum/internal/gitview"
 	"athenaeum/internal/httpapi"
+	"athenaeum/internal/search"
 	"athenaeum/internal/security"
 	"athenaeum/internal/session"
 	"athenaeum/internal/watcher"
@@ -84,17 +86,30 @@ func Run(ctx context.Context, opts Options) error {
 
 	// Personal state lives outside the workspace (spec 03 section 1). A failure
 	// here degrades crash recovery but must not stop a workspace opening.
-	var recovery *session.RecoveryStore
+	var (
+		recovery     *session.RecoveryStore
+		sessionState *session.StateStore
+		dirs         session.Dirs
+		dirsReady    bool
+	)
 	key := session.NewWorkspaceKey(opts.Config.AbsRoot, "")
-	if dirs, err := session.ResolveDirs(key); err != nil {
-		opts.Logger.Warn("crash recovery unavailable", "error", err)
-	} else if store, err := session.NewRecoveryStore(dirs); err != nil {
+	if resolved, err := session.ResolveDirs(key); err != nil {
 		opts.Logger.Warn("crash recovery unavailable", "error", err)
 	} else {
-		recovery = store
-		if pending := store.Count(); pending > 0 {
-			opts.Logger.Info("unsaved buffers are available to recover", "count", pending)
-			opts.pendingRecovery = pending
+		dirs, dirsReady = resolved, true
+		if store, err := session.NewRecoveryStore(dirs); err != nil {
+			opts.Logger.Warn("crash recovery unavailable", "error", err)
+		} else {
+			recovery = store
+			if pending := store.Count(); pending > 0 {
+				opts.Logger.Info("unsaved buffers are available to recover", "count", pending)
+				opts.pendingRecovery = pending
+			}
+		}
+		if store, err := session.NewStateStore(dirs); err != nil {
+			opts.Logger.Warn("session restoration unavailable", "error", err)
+		} else {
+			sessionState = store
 		}
 	}
 
@@ -105,6 +120,38 @@ func Run(ctx context.Context, opts Options) error {
 		opts.Logger.Warn("live change notifications unavailable", "error", err)
 	} else {
 		changeWatcher = w
+	}
+
+	// Read-only Git context. Absent Git is not an error: the panel and the
+	// search filter simply report themselves unavailable (acceptance J4, C1).
+	gitAdapter := gitview.New(opts.Config.AbsRoot, opts.Logger)
+	if !opts.Config.Git.Enabled {
+		gitAdapter = nil
+	}
+
+	// The disposable FTS projection (R7, D-014). It lives under the OS cache
+	// directory, never inside the workspace, and a failure to open it costs
+	// search alone — every other capability is unaffected (C1, C2).
+	var searchService *search.Service
+	if opts.Config.Search.Enabled && dirsReady {
+		index, err := search.Open(dirs.Cache, search.ProjectionKey(opts.Config))
+		if err != nil {
+			opts.Logger.Warn("search is unavailable", "error", err)
+		} else {
+			searchService = search.NewService(search.Options{
+				Index:     index,
+				Workspace: ws,
+				Documents: docs,
+				Watcher:   changeWatcher,
+				Git:       gitStates(gitAdapter),
+				Logger:    opts.Logger,
+				View: documents.IndexOptions{
+					IncludeCodeBlocks:  opts.Config.Search.IndexCodeBlocks,
+					IncludeFrontMatter: opts.Config.Search.IndexFrontMatter,
+				},
+			})
+			defer searchService.Close()
+		}
 	}
 
 	sessions, err := newSessions(opts)
@@ -147,6 +194,8 @@ func Run(ctx context.Context, opts Options) error {
 			Recovery:      recovery,
 			Assets:        assetService,
 			Watcher:       changeWatcher,
+			Search:        searchService,
+			SessionState:  sessionState,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -168,6 +217,18 @@ func Run(ctx context.Context, opts Options) error {
 	if changeWatcher != nil {
 		go changeWatcher.Run(ctx)
 	}
+	if gitAdapter != nil {
+		go gitAdapter.Run(ctx)
+		if changeWatcher != nil {
+			go followWorkspace(ctx, changeWatcher, gitAdapter)
+		}
+	}
+	// Indexing starts after the listener is open and never blocks it: the
+	// server must be ready within two seconds regardless of corpus size
+	// (requirements N1 and N2).
+	if searchService != nil {
+		searchService.Start(ctx)
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -185,6 +246,37 @@ func Run(ctx context.Context, opts Options) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
+	}
+}
+
+// gitStates adapts the Git adapter to the search filter.
+//
+// It returns an untyped nil when Git is off, because a nil *gitview.Adapter
+// stored in a non-nil interface would satisfy `!= nil` and then panic on first
+// use — the classic typed-nil trap.
+func gitStates(adapter *gitview.Adapter) search.GitStates {
+	if adapter == nil {
+		return nil
+	}
+	return adapter
+}
+
+// followWorkspace refreshes Git state when the workspace changes, so the
+// search filter reflects an edit without waiting for the periodic refresh.
+func followWorkspace(ctx context.Context, w *watcher.Watcher, adapter *gitview.Adapter) {
+	changes, cancel := w.Subscribe()
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, open := <-changes:
+			if !open {
+				return
+			}
+			adapter.Notify()
+		}
 	}
 }
 
