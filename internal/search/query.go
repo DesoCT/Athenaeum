@@ -2,19 +2,16 @@ package search
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"unicode"
 )
 
-// Snippet highlight delimiters.
-//
-// STX and ETX rather than markup: the snippet is turned into typed segments
-// before it leaves the server, so no HTML is ever constructed from document
-// text and the frontend cannot be made to render an injected tag
-// (spec 03 section 9).
+// snippetWindow is the maximum number of runes in a result snippet, and lead is
+// how much context to keep before the first matched term.
 const (
-	highlightOpen  = "\x02"
-	highlightClose = "\x03"
+	snippetWindow = 220
+	snippetLead   = 60
 )
 
 // ErrNoSearchableTerms reports a query that contains nothing to search for,
@@ -146,36 +143,117 @@ type Segment struct {
 	Match bool `json:"match,omitempty"`
 }
 
-// segments splits a delimited FTS5 snippet into typed runs.
-func segments(snippet string) []Segment {
-	if snippet == "" {
+// snippetFor builds a highlighted snippet from a line of authoritative text.
+//
+// FTS5's own snippet() was measured at roughly six milliseconds per row on a
+// hundred-kilobyte document — around 99% of total query time — because it
+// re-tokenises the whole column to choose a window. The match location is
+// already known here, and the file has already been read to find it, so the
+// snippet costs a scan of one line instead.
+//
+// Building it from the file rather than from the index also means the snippet
+// shows what the document says now, not what the projection last recorded (C2).
+func snippetFor(text string, terms []string) []Segment {
+	runes := []rune(text)
+	if len(runes) == 0 {
 		return nil
 	}
-	var out []Segment
-	rest := snippet
-	for {
-		open := strings.Index(rest, highlightOpen)
-		if open < 0 {
-			break
-		}
-		close := strings.Index(rest[open:], highlightClose)
-		if close < 0 {
-			break
-		}
-		close += open
+	spans := matchSpans(runes, terms)
 
-		if before := rest[:open]; before != "" {
-			out = append(out, Segment{Text: before})
-		}
-		if match := rest[open+len(highlightOpen) : close]; match != "" {
-			out = append(out, Segment{Text: match, Match: true})
-		}
-		rest = rest[close+len(highlightClose):]
+	// Centre the window on the first match, keeping a little context before it.
+	start := 0
+	if len(spans) > 0 && spans[0].start > snippetLead {
+		start = spans[0].start - snippetLead
 	}
-	if rest != "" {
-		out = append(out, Segment{Text: rest})
+	end := min(start+snippetWindow, len(runes))
+
+	var out []Segment
+	appendText := func(from, to int) {
+		if from < to {
+			out = append(out, Segment{Text: string(runes[from:to])})
+		}
+	}
+
+	if start > 0 {
+		out = append(out, Segment{Text: "…"})
+	}
+	cursor := start
+	for _, span := range spans {
+		if span.start >= end {
+			break
+		}
+		if span.start < cursor {
+			continue // Overlapping match already covered.
+		}
+		appendText(cursor, span.start)
+		out = append(out, Segment{Text: string(runes[span.start:min(span.end, end)]), Match: true})
+		cursor = span.end
+	}
+	appendText(cursor, end)
+	if end < len(runes) {
+		out = append(out, Segment{Text: "…"})
 	}
 	return out
+}
+
+// span is a matched range within a line, in rune offsets.
+type span struct{ start, end int }
+
+// matchSpans finds every term occurrence in a line, merged and ordered.
+//
+// Matching is by the same truncated stem the locator uses, so what is
+// highlighted is what caused the line to be chosen.
+func matchSpans(runes []rune, terms []string) []span {
+	lower := []rune(strings.ToLower(string(runes)))
+	var spans []span
+
+	for _, term := range terms {
+		needle := []rune(stemPrefix(term))
+		if len(needle) == 0 {
+			continue
+		}
+		for i := 0; i+len(needle) <= len(lower); i++ {
+			if !equalAt(lower, needle, i) {
+				continue
+			}
+			// Extend over the rest of the word, so "index" highlights the whole
+			// of "indexing" rather than a fragment of it.
+			end := i + len(needle)
+			for end < len(lower) && isWordRune(lower[end]) {
+				end++
+			}
+			spans = append(spans, span{start: i, end: end})
+			i = end - 1
+		}
+	}
+
+	slices.SortFunc(spans, func(a, b span) int { return a.start - b.start })
+
+	// Merge overlaps so a segment is never emitted twice.
+	merged := spans[:0]
+	for _, s := range spans {
+		if len(merged) > 0 && s.start <= merged[len(merged)-1].end {
+			if s.end > merged[len(merged)-1].end {
+				merged[len(merged)-1].end = s.end
+			}
+			continue
+		}
+		merged = append(merged, s)
+	}
+	return merged
+}
+
+func equalAt(haystack, needle []rune, at int) bool {
+	for i, r := range needle {
+		if haystack[at+i] != r {
+			return false
+		}
+	}
+	return true
+}
+
+func isWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsNumber(r)
 }
 
 // locate finds the best line for a match inside a document body.
@@ -184,17 +262,18 @@ func segments(snippet string) []Segment {
 // Scanning it here means the reported line is always correct for the file as it
 // is now, even when the projection has not caught up yet (C2).
 //
-// Returns a 1-based line number, or 0 when no line can be attributed.
-func locate(content string, terms []string) int {
+// Returns a 1-based line number and that line's text, or 0 and "" when no line
+// can be attributed.
+func locate(content string, terms []string) (int, string) {
 	if len(terms) == 0 {
-		return 0
+		return 0, ""
 	}
 	needles := make([]string, 0, len(terms))
 	for _, term := range terms {
 		needles = append(needles, stemPrefix(term))
 	}
 
-	best, bestScore := 0, 0
+	best, bestScore, bestText := 0, 0, ""
 	for i, line := range strings.Split(content, "\n") {
 		lower := strings.ToLower(line)
 		score := 0
@@ -204,13 +283,13 @@ func locate(content string, terms []string) int {
 			}
 		}
 		if score > bestScore {
-			best, bestScore = i+1, score
+			best, bestScore, bestText = i+1, score, line
 			if score == len(needles) {
 				break // Every term on one line; nothing will beat this.
 			}
 		}
 	}
-	return best
+	return best, bestText
 }
 
 // stemPrefix approximates the porter stemmer for line location.

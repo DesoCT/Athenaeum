@@ -9,28 +9,35 @@ import (
 )
 
 // bm25 column weights, in the order the FTS5 table declares them:
-// path, title, headings, body, tags.
+// body, headings, title, path, tags.
 //
 // A title hit is the strongest signal that a document is the one being looked
 // for; a body hit is the weakest because a long document matches many words.
 // The weights are deliberately blunt: R7 asks for lexical search, and an
 // elaborate scoring model would be unexplainable to the user (C8).
-const rankExpression = `bm25(documents_fts, 4.0, 10.0, 6.0, 1.0, 3.0)`
+const rankExpression = `bm25(documents_fts, 1.0, 6.0, 10.0, 4.0, 3.0)`
 
 // scanCap bounds how many ranked rows a single query will walk while applying
 // the Git filter, which cannot be expressed in SQL. It keeps a filter that
 // matches almost nothing from turning into a full-table scan.
 const scanCap = 2000
 
+// gitOverFetch is how many ranked rows to consider per requested result when a
+// Git filter is active, since that filter is applied outside SQL.
+const gitOverFetch = 20
+
+// inclusionCushion covers rows the live workspace rejects — a document deleted
+// or newly excluded since it was indexed. Without it a stale row could silently
+// shorten a page of results.
+const inclusionCushion = 4
+
 // hit is one ranked row, before the authoritative file is consulted.
 type hit struct {
-	documentID  string
-	title       string
-	groups      []string
-	outline     []documents.Heading
-	bodySnippet string
-	anySnippet  string
-	score       float64
+	documentID string
+	title      string
+	groups     []string
+	outline    []documents.Heading
+	score      float64
 }
 
 // find runs the ranked query and applies the filters SQL can express.
@@ -58,16 +65,24 @@ func (s *Service) find(expr string, filters Filters, limit int, allow func(strin
 		args = append(args, "% "+escapeLike(filters.Group)+" %")
 	}
 
+	// The SQL LIMIT is what the caller will actually use, not a generous scan
+	// bound: every row the LIMIT admits costs ranking work.
+	rowLimit := limit + inclusionCushion
+	if filters.Git != "" {
+		rowLimit = min(limit*gitOverFetch, scanCap)
+	}
+
+	// No snippet() here. It re-tokenises the whole column to pick a window,
+	// which measured at ~6 ms per row on a 100 KB document and dominated the
+	// query. Snippets are built from the authoritative file instead, which is
+	// already being read to locate the match.
 	query := fmt.Sprintf(`
-		SELECT d.id, d.title, d.groups, d.outline,
-		       snippet(documents_fts, 3, char(2), char(3), '…', 14),
-		       snippet(documents_fts, -1, char(2), char(3), '…', 14),
-		       %[1]s AS score
+		SELECT d.id, d.title, d.groups, d.outline, %[1]s AS score
 		FROM documents_fts
 		JOIN documents d ON d.rowid = documents_fts.rowid
 		WHERE %[2]s
 		ORDER BY score
-		LIMIT %[3]d`, rankExpression, strings.Join(where, " AND "), scanCap)
+		LIMIT %[3]d`, rankExpression, strings.Join(where, " AND "), rowLimit)
 
 	rows, err := s.index.reader.Query(query, args...)
 	if err != nil {
@@ -82,8 +97,7 @@ func (s *Service) find(expr string, filters Filters, limit int, allow func(strin
 			groups  string
 			outline string
 		)
-		if err := rows.Scan(&h.documentID, &h.title, &groups, &outline,
-			&h.bodySnippet, &h.anySnippet, &h.score); err != nil {
+		if err := rows.Scan(&h.documentID, &h.title, &groups, &outline, &h.score); err != nil {
 			return nil, err
 		}
 		if groups != "" {

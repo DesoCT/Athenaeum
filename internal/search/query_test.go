@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestCompileProducesValidFTS5 is the load-bearing test for the whole query
@@ -94,36 +95,67 @@ func TestCompileRejectsWordlessQueries(t *testing.T) {
 	}
 }
 
-func TestSegments(t *testing.T) {
+func TestSnippetFor(t *testing.T) {
 	tests := []struct {
-		name    string
-		snippet string
-		want    []Segment
+		name  string
+		text  string
+		terms []string
+		want  []Segment
 	}{
-		{"plain text", "no match here", []Segment{{Text: "no match here"}}},
 		{
-			"one highlight",
-			"a " + highlightOpen + "hit" + highlightClose + " b",
-			[]Segment{{Text: "a "}, {Text: "hit", Match: true}, {Text: " b"}},
+			"marks the matched word",
+			"Indexing uses a bounded worker pool.",
+			[]string{"bounded"},
+			[]Segment{
+				{Text: "Indexing uses a "},
+				{Text: "bounded", Match: true},
+				{Text: " worker pool."},
+			},
 		},
 		{
-			"two highlights",
-			highlightOpen + "one" + highlightClose + " and " + highlightOpen + "two" + highlightClose,
-			[]Segment{{Text: "one", Match: true}, {Text: " and "}, {Text: "two", Match: true}},
+			"marks every term",
+			"a worker and a pool",
+			[]string{"worker", "pool"},
+			[]Segment{
+				{Text: "a "},
+				{Text: "worker", Match: true},
+				{Text: " and a "},
+				{Text: "pool", Match: true},
+			},
 		},
-		{"empty", "", nil},
 		{
-			"unbalanced delimiter is passed through as text",
-			"dangling " + highlightOpen + "open",
-			[]Segment{{Text: "dangling " + highlightOpen + "open"}},
+			"a stemmed term highlights the whole word",
+			"Indexing happens in the background.",
+			[]string{"indexed"},
+			[]Segment{
+				{Text: "Indexing", Match: true},
+				{Text: " happens in the background."},
+			},
 		},
+		{
+			"matching is case-insensitive but text is preserved",
+			"The Workspace is authoritative.",
+			[]string{"workspace"},
+			[]Segment{
+				{Text: "The "},
+				{Text: "Workspace", Match: true},
+				{Text: " is authoritative."},
+			},
+		},
+		{
+			"an unmatched line is returned as plain text",
+			"Nothing to see here.",
+			[]string{"absent"},
+			[]Segment{{Text: "Nothing to see here."}},
+		},
+		{"empty text yields no snippet", "", []string{"anything"}, nil},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := segments(test.snippet)
+			got := snippetFor(test.text, test.terms)
 			if len(got) != len(test.want) {
-				t.Fatalf("segments = %+v, want %+v", got, test.want)
+				t.Fatalf("snippet = %+v, want %+v", got, test.want)
 			}
 			for i := range got {
 				if got[i] != test.want[i] {
@@ -134,6 +166,60 @@ func TestSegments(t *testing.T) {
 	}
 }
 
+// TestSnippetWindow proves a long line is trimmed around the match rather than
+// returned whole, and that the elision is visible.
+func TestSnippetWindow(t *testing.T) {
+	prefix := strings.Repeat("filler ", 200)
+	text := prefix + "the bounded worker pool " + strings.Repeat("tail ", 200)
+
+	got := snippetFor(text, []string{"bounded"})
+	if len(got) == 0 {
+		t.Fatal("no snippet")
+	}
+	if got[0].Text != "…" {
+		t.Errorf("a trimmed snippet should open with an ellipsis, got %q", got[0].Text)
+	}
+	if got[len(got)-1].Text != "…" {
+		t.Errorf("a trimmed snippet should close with an ellipsis, got %q", got[len(got)-1].Text)
+	}
+
+	var total int
+	var marked bool
+	for _, segment := range got {
+		total += len([]rune(segment.Text))
+		if segment.Match {
+			marked = true
+			if segment.Text != "bounded" {
+				t.Errorf("marked run = %q, want %q", segment.Text, "bounded")
+			}
+		}
+	}
+	if !marked {
+		t.Error("the matched term was not marked")
+	}
+	if total > snippetWindow+8 {
+		t.Errorf("snippet is %d runes, above the %d window", total, snippetWindow)
+	}
+}
+
+// TestSnippetHandlesMultibyteText guards against slicing a rune in half, which
+// would corrupt the text the user is shown.
+func TestSnippetHandlesMultibyteText(t *testing.T) {
+	text := strings.Repeat("日本語のテキスト ", 40) + "café bounded " + strings.Repeat("さらに ", 40)
+
+	got := snippetFor(text, []string{"bounded"})
+	var joined strings.Builder
+	for _, segment := range got {
+		joined.WriteString(segment.Text)
+	}
+	if !utf8.ValidString(joined.String()) {
+		t.Fatal("the snippet is not valid UTF-8; a rune was split")
+	}
+	if !strings.Contains(joined.String(), "bounded") {
+		t.Error("the match is missing from the snippet")
+	}
+}
+
 func TestLocate(t *testing.T) {
 	content := "# Title\n\nFirst paragraph.\n\n## Section\n\nThe bounded worker pool lives here.\n"
 
@@ -141,19 +227,24 @@ func TestLocate(t *testing.T) {
 		name  string
 		terms []string
 		want  int
+		text  string
 	}{
-		{"exact word", []string{"bounded"}, 7},
-		{"two words on one line beat one", []string{"worker", "pool"}, 7},
-		{"heading text", []string{"section"}, 5},
-		{"stemmed term still finds a line", []string{"paragraphs"}, 3},
-		{"absent term attributes nothing", []string{"absent"}, 0},
-		{"no terms attributes nothing", nil, 0},
+		{"exact word", []string{"bounded"}, 7, "The bounded worker pool lives here."},
+		{"two words on one line beat one", []string{"worker", "pool"}, 7, "The bounded worker pool lives here."},
+		{"heading text", []string{"section"}, 5, "## Section"},
+		{"stemmed term still finds a line", []string{"paragraphs"}, 3, "First paragraph."},
+		{"absent term attributes nothing", []string{"absent"}, 0, ""},
+		{"no terms attributes nothing", nil, 0, ""},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := locate(content, test.terms); got != test.want {
-				t.Errorf("locate = %d, want %d", got, test.want)
+			line, text := locate(content, test.terms)
+			if line != test.want {
+				t.Errorf("locate line = %d, want %d", line, test.want)
+			}
+			if text != test.text {
+				t.Errorf("locate text = %q, want %q", text, test.text)
 			}
 		})
 	}

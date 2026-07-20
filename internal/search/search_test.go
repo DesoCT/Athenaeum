@@ -547,16 +547,15 @@ func TestSnippetsCarryNoMarkup(t *testing.T) {
 	if len(response.Results) == 0 {
 		t.Fatal("no result")
 	}
-	for _, segment := range response.Results[0].Snippet {
-		if strings.Contains(segment.Text, highlightOpen) || strings.Contains(segment.Text, highlightClose) {
-			t.Errorf("a delimiter survived into a segment: %q", segment.Text)
-		}
-	}
-	// The text is carried verbatim as data; it is the transport that is safe,
-	// not the content, and that is the correct division of responsibility.
+	// Highlighting is structural: a marked run is a field on a segment, never a
+	// delimiter or a tag embedded in text. There is therefore nothing in a
+	// snippet a frontend could be tricked into rendering as markup.
 	joined := joinSegments(response.Results[0].Snippet)
 	if !strings.Contains(joined, "<script>") {
 		t.Errorf("the snippet silently altered document text: %q", joined)
+	}
+	if strings.Contains(joined, "<mark>") || strings.Contains(joined, "\x02") {
+		t.Errorf("the snippet carries markup or delimiters: %q", joined)
 	}
 }
 

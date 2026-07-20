@@ -663,27 +663,35 @@ func (s *Service) resolve(h hit, terms []string, budget *int) Result {
 		DocumentID: h.documentID,
 		Title:      h.title,
 		Groups:     h.groups,
-		Field:      FieldBody,
-		Snippet:    segments(h.bodySnippet),
-	}
-	if !highlighted(h.bodySnippet) {
-		result.Snippet = segments(h.anySnippet)
-		result.Field = metadataField(h, terms)
 	}
 
-	// Reading the file is what makes the reported line correct rather than
-	// merely current-as-of-the-last-index (constitution C2).
+	// Reading the file is what makes the reported line and the snippet correct
+	// for the document as it is now, rather than as the projection last
+	// recorded it (constitution C2).
 	if *budget > 0 {
 		if content, size, ok := s.readForLocation(h.documentID, *budget); ok {
 			*budget -= size
-			if line := locate(content, terms); line > 0 {
+			if line, text := locate(content, terms); line > 0 {
 				result.Line = line
+				result.Snippet = snippetFor(text, terms)
 				result.HeadingPath, result.HeadingSlug = headingFor(h.outline, line)
-				if result.Field != FieldBody && insideHeading(h.outline, line) {
+				result.Field = FieldBody
+				if insideHeading(h.outline, line) {
 					result.Field = FieldHeading
 				}
+				return result
 			}
 		}
+	}
+
+	// Nothing in the text matched, so the document was found by its title or
+	// its path. Saying which, and showing it, is what keeps a result from being
+	// unexplained (constitution C8).
+	result.Field = metadataField(h, terms)
+	if result.Field == FieldTitle {
+		result.Snippet = snippetFor(h.title, terms)
+	} else {
+		result.Snippet = snippetFor(h.documentID, terms)
 	}
 	return result
 }
@@ -714,11 +722,6 @@ func insideHeading(outline []documents.Heading, line int) bool {
 		}
 	}
 	return false
-}
-
-// highlighted reports whether a snippet contains a marked run.
-func highlighted(snippet string) bool {
-	return strings.Contains(snippet, highlightOpen)
 }
 
 // metadataField attributes a non-body match to the path or the title.

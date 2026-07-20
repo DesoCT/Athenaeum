@@ -69,6 +69,15 @@ test-browser: build ## Run browser tests against a running instance (needs ATHEN
 test-acceptance: build ## Run acceptance tests against the release binary
 	ATHENAEUM_BINARY=$(CURDIR)/$(BINARY) $(GO) test ./test/acceptance/... -count=1 -v
 
+# The N3 corpus is 5,000 documents totalling 2 GB, so this is opt-in and needs
+# a real filesystem: ATHENAEUM_SCALE_DIR on a tmpfs would measure RAM.
+SCALE_DIR ?= $(HOME)/.cache/athenaeum-scale-fixture
+
+.PHONY: test-scale
+test-scale: ## Generate the 5,000-document fixture and measure N1-N3
+	ATHENAEUM_SCALE=1 ATHENAEUM_SCALE_DIR=$(SCALE_DIR) \
+		$(GO) test ./test/scale/... -count=1 -v -timeout 60m
+
 .PHONY: lint
 lint: ## Vet Go sources and check formatting
 	$(GO) vet ./...

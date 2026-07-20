@@ -15,7 +15,7 @@ import (
 
 // schemaVersion guards the on-disk projection. Bumping it discards the cache
 // and rebuilds, which is always safe: nothing here is authoritative (C2, D-014).
-const schemaVersion = 1
+const schemaVersion = 2
 
 // IndexFileName is the projection's file name inside the workspace cache
 // directory (spec 03 section 2.3).
@@ -135,6 +135,12 @@ func (i *Index) Close() error {
 // `documents` carries the filterable metadata and `documents_fts` the searchable
 // text, joined on rowid. Group membership is a filter rather than a search
 // column, so a group name cannot silently rank documents that never mention it.
+//
+// Column order is load-bearing. FTS5's snippet() with a negative column index
+// extracts from the leftmost column containing a match, so declaring body first
+// yields the useful snippet from a single call. Asking for a body snippet and a
+// fallback snippet separately doubled the per-row cost, and snippet() over a
+// large body is the most expensive part of a query by a wide margin.
 const schema = `
 CREATE TABLE IF NOT EXISTS meta (
 	key   TEXT PRIMARY KEY,
@@ -154,10 +160,10 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
-	path,
-	title,
-	headings,
 	body,
+	headings,
+	title,
+	path,
 	tags,
 	tokenize='porter unicode61'
 );
@@ -299,10 +305,10 @@ func (i *Index) PutBatch(views []*documents.IndexView) error {
 			return err
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO documents_fts (rowid, path, title, headings, body, tags)
+			`INSERT INTO documents_fts (rowid, body, headings, title, path, tags)
 			 VALUES (?, ?, ?, ?, ?, ?)`,
-			rowID, pathText(view.ID), view.Title, headingText(view.Headings),
-			view.Body, strings.Join(view.Tags, " ")); err != nil {
+			rowID, view.Body, headingText(view.Headings), view.Title,
+			pathText(view.ID), strings.Join(view.Tags, " ")); err != nil {
 			return err
 		}
 	}
