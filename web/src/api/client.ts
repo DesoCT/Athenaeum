@@ -1,4 +1,10 @@
-import type { ApiErrorBody, Health } from "./types";
+import type {
+  ApiErrorBody,
+  DocumentDetail,
+  DocumentSummary,
+  Health,
+  WorkspaceInfo,
+} from "./types";
 
 const API_PREFIX = "/api/v1";
 
@@ -51,4 +57,25 @@ async function readError(response: Response): Promise<ApiErrorBody> {
 
 export function getHealth(): Promise<Health> {
   return request<Health>("/health");
+}
+
+export function getWorkspace(): Promise<WorkspaceInfo> {
+  return request<WorkspaceInfo>("/workspace");
+}
+
+export async function listDocuments(): Promise<DocumentSummary[]> {
+  const body = await request<{ documents: DocumentSummary[] }>("/documents");
+  return body.documents;
+}
+
+/**
+ * getDocument reads one document.
+ *
+ * The ID is encoded per path segment: it contains slashes that must stay
+ * meaningful, but any other character needs escaping. The server rejects
+ * traversal on the raw path regardless.
+ */
+export function getDocument(id: string): Promise<DocumentDetail> {
+  const encoded = id.split("/").map(encodeURIComponent).join("/");
+  return request<DocumentDetail>(`/documents/${encoded}`);
 }

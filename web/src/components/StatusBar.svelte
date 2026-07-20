@@ -1,33 +1,19 @@
 <script lang="ts">
-  import type { Health } from "../api/types";
-
-  type Connection =
-    | { kind: "loading" }
-    | { kind: "ready"; health: Health }
-    | { kind: "error"; code: string; message: string };
+  import type { DocumentDetail, WorkspaceInfo } from "../api/types";
 
   interface Props {
-    connection: Connection;
+    workspace: WorkspaceInfo | null;
+    document: DocumentDetail | null;
+    state: "loading" | "ready" | "error";
   }
 
-  let { connection }: Props = $props();
+  let { workspace, document: doc, state }: Props = $props();
 
   // Status is conveyed by text as well as colour (spec 04 section 15).
   const label = $derived(
-    connection.kind === "ready"
-      ? "Connected"
-      : connection.kind === "loading"
-        ? "Connecting"
-        : "Disconnected",
+    state === "ready" ? "Connected" : state === "loading" ? "Connecting" : "Disconnected",
   );
-
-  const tone = $derived(
-    connection.kind === "ready"
-      ? "ok"
-      : connection.kind === "loading"
-        ? "pending"
-        : "danger",
-  );
+  const tone = $derived(state === "ready" ? "ok" : state === "loading" ? "pending" : "danger");
 </script>
 
 <footer class="status-bar">
@@ -36,13 +22,15 @@
     {label}
   </span>
 
-  {#if connection.kind === "ready"}
-    <span class="field">athenaeum {connection.health.version}</span>
-    <span class="field">
-      {connection.health.remote ? "remote" : "loopback"}
-    </span>
-  {:else if connection.kind === "error"}
-    <span class="field">{connection.code}</span>
+  {#if doc}
+    <span class="field">{doc.id}</span>
+    <span class="field">{doc.outline.length} heading{doc.outline.length === 1 ? "" : "s"}</span>
+    <span class="field">{(doc.size / 1024).toFixed(1)} KB</span>
+    {#if !doc.writable}
+      <span class="field muted">read-only</span>
+    {/if}
+  {:else if workspace}
+    <span class="field">{workspace.document_count} documents</span>
   {/if}
 
   <span class="spacer"></span>
@@ -59,7 +47,7 @@
     border-top: 1px solid var(--line);
     background: var(--surface-panel);
     font-family: var(--font-mono);
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--text-secondary);
   }
 
@@ -76,17 +64,9 @@
     background: currentColor;
   }
 
-  .indicator.ok {
-    color: var(--ok);
-  }
-
-  .indicator.pending {
-    color: var(--text-muted);
-  }
-
-  .indicator.danger {
-    color: var(--danger);
-  }
+  .indicator.ok { color: var(--ok); }
+  .indicator.pending { color: var(--text-muted); }
+  .indicator.danger { color: var(--danger); }
 
   .spacer {
     flex: 1;

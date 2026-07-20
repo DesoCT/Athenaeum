@@ -42,7 +42,7 @@ jobs:
       - name: Lint
         run: make lint
 
-      - name: Type-check frontend
+      - name: Frontend type-check and unit tests
         run: make test-web
 
       - name: Go tests

@@ -5,10 +5,21 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 // build must emit relative, self-contained assets under that directory.
 export default defineConfig({
   plugins: [svelte()],
+  resolve: {
+    // Mermaid bundles its own KaTeX for maths in diagram labels. Without
+    // deduplication the release embeds two ~260 kB copies (constitution C6).
+    dedupe: ["katex"],
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    sourcemap: true,
+    // Source maps are development aids. Embedding them would roughly triple
+    // the size of the single executable, so they are opt-in via
+    // ATHENAEUM_SOURCEMAPS=1 rather than shipped by default.
+    sourcemap: process.env.ATHENAEUM_SOURCEMAPS === "1",
+    // Mermaid's per-diagram chunks legitimately exceed the default warning
+    // threshold, and each is lazy-loaded, so the warning is noise here.
+    chunkSizeWarningLimit: 800,
   },
   server: {
     port: 5173,

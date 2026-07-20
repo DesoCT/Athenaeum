@@ -13,7 +13,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "types": ["vite/client", "node"]
   },
   "include": ["src/**/*.ts", "src/**/*.svelte", "src/**/*.d.ts"]
 }

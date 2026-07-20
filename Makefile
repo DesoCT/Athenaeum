@@ -53,8 +53,9 @@ test-go: ## Run Go unit and integration tests, with the race detector when possi
 	fi
 
 .PHONY: test-web
-test-web: ## Type-check the frontend
+test-web: ## Type-check and unit-test the frontend
 	cd web && $(NPM) run check
+	cd web && $(NPM) test
 
 .PHONY: test-acceptance
 test-acceptance: build ## Run acceptance tests against the release binary
