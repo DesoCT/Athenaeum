@@ -245,6 +245,14 @@ func (g *PathGuard) ResolveWrite(documentID string) (string, error) {
 	return target, nil
 }
 
+// Canonicalise resolves symlinks in a path, falling back gracefully.
+//
+// It is exported for callers outside this package that must compare paths —
+// the workspace registry, for one — because comparing a non-canonical path
+// against a canonical root has broken this project twice: on macOS /var is a
+// symlink to /private/var, so two names for one directory disagree textually.
+func Canonicalise(absPath string) string { return canonicalise(absPath) }
+
 // canonicalise resolves symlinks in a path, falling back gracefully.
 //
 // The path may not exist — a removal event names a file that has just gone —
