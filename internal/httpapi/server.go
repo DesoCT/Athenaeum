@@ -34,7 +34,10 @@ type Options struct {
 	Version       string
 	WorkspaceName string
 	Remote        bool
-	Logger        *slog.Logger
+	// AllowRemoteAssets mirrors assets.allow_remote. It widens the image
+	// policy in the Content-Security-Policy header (R3, N7).
+	AllowRemoteAssets bool
+	Logger            *slog.Logger
 
 	// Workspace and Documents are nil only in tests that exercise the
 	// transport layer alone.
@@ -100,11 +103,7 @@ func (s *Server) routes() {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// A conservative default policy: no third-party script, no framing, and
-	// connections restricted to self (spec 03 section 9).
-	w.Header().Set("Content-Security-Policy",
-		"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "+
-			"connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", s.contentSecurityPolicy())
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 
@@ -118,6 +117,29 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mux.ServeHTTP(w, r)
+}
+
+// contentSecurityPolicy builds the policy header.
+//
+// Script, framing, and connections stay restricted to self (spec 03 section 9);
+// only the image policy varies. R3 requires remote images to render with a
+// visible indicator, and N7 permits exactly one kind of outbound request during
+// normal use: a user-requested remote asset. A blanket img-src 'self' would
+// block those before the browser even issued the request, silently making
+// assets.allow_remote meaningless.
+//
+// When remote assets are disabled -- including under --safe-mode, which clears
+// the flag -- the tighter policy applies and nothing off-origin can load.
+func (s *Server) contentSecurityPolicy() string {
+	imgSrc := "'self' data:"
+	if s.opts.AllowRemoteAssets {
+		// http: as well as https:, because Markdown in the wild carries both
+		// and silently dropping one is the same class of failure. Remote images
+		// are marked in the DOM and sent with no referrer and no credentials.
+		imgSrc += " https: http:"
+	}
+	return "default-src 'self'; img-src " + imgSrc + "; style-src 'self' 'unsafe-inline'; " +
+		"connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 }
 
 // guard enforces session authentication on every route, and additionally

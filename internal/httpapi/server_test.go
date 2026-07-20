@@ -247,3 +247,67 @@ func TestFrontendNotBuiltIsExplicit(t *testing.T) {
 		t.Fatalf("unhelpful body: %q", w.Body.String())
 	}
 }
+
+// TestRemoteImagesAllowedWhenConfigured is the regression test for a bug that
+// made every remote image in every document fail to load.
+//
+// The Content-Security-Policy hard-coded img-src 'self' data:, so the browser
+// refused remote images before issuing a request — which also made opening one
+// directly fail, and made assets.allow_remote silently meaningless. R3 requires
+// remote images to render with a visible indicator.
+func TestRemoteImagesAllowedWhenConfigured(t *testing.T) {
+	sessions, err := security.NewSessionManager(time.Hour, false)
+	if err != nil {
+		t.Fatalf("NewSessionManager: %v", err)
+	}
+	srv := New(Options{
+		Sessions:          sessions,
+		Origins:           security.NewOriginPolicy([]string{testOrigin}),
+		Frontend:          fs.FS(fstest.MapFS{}),
+		AllowRemoteAssets: true,
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	csp := w.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "img-src 'self' data: https: http:") {
+		t.Fatalf("remote images are still blocked by the policy: %q", csp)
+	}
+	// Widening images must not have widened anything else.
+	for _, directive := range []string{
+		"default-src 'self'", "connect-src 'self'", "frame-ancestors 'none'",
+	} {
+		if !strings.Contains(csp, directive) {
+			t.Errorf("policy lost %q: %q", directive, csp)
+		}
+	}
+}
+
+// TestRemoteImagesBlockedWhenDisabled covers --safe-mode, which clears the
+// flag, and any workspace setting allow_remote = false.
+func TestRemoteImagesBlockedWhenDisabled(t *testing.T) {
+	sessions, err := security.NewSessionManager(time.Hour, false)
+	if err != nil {
+		t.Fatalf("NewSessionManager: %v", err)
+	}
+	srv := New(Options{
+		Sessions:          sessions,
+		Origins:           security.NewOriginPolicy([]string{testOrigin}),
+		Frontend:          fs.FS(fstest.MapFS{}),
+		AllowRemoteAssets: false,
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	csp := w.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "http:") || strings.Contains(csp, "https:") {
+		t.Fatalf("remote images are permitted although they are disabled: %q", csp)
+	}
+	if !strings.Contains(csp, "img-src 'self' data:") {
+		t.Fatalf("local and inline images should still load: %q", csp)
+	}
+}
