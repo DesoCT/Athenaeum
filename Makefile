@@ -22,6 +22,16 @@ help: ## Show available commands
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
+# go:embed resolves at compile time, so web/dist must exist before any Go
+# command runs -- including on a fresh checkout where the frontend has not been
+# built yet. A tracked .gitkeep cannot solve this alone, because Vite's
+# emptyOutDir deletes the directory contents on every build. Creating the
+# placeholder on demand works in every case.
+.PHONY: dist-placeholder
+dist-placeholder:
+	@mkdir -p web/dist
+	@[ -n "$$(ls -A web/dist 2>/dev/null)" ] || touch web/dist/.gitkeep
+
 .PHONY: deps
 deps: ## Install frontend dependencies
 	cd web && $(NPM) ci || (cd web && $(NPM) install)
@@ -43,7 +53,7 @@ test: test-go test-web ## Run all tests
 # cleanly. The race detector needs cgo, so the race run re-enables it for tests
 # only, and falls back to a non-race run when no C toolchain is present.
 .PHONY: test-go
-test-go: ## Run Go unit and integration tests, with the race detector when possible
+test-go: dist-placeholder ## Run Go unit and integration tests, with the race detector when possible
 	@if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; then \
 		echo "go test -race (cgo enabled for tests only)"; \
 		CGO_ENABLED=1 $(GO) test ./... -race -count=1; \
@@ -83,7 +93,7 @@ test-scale: ## Generate the 5,000-document fixture and measure N1-N3
 	@echo "  cd web && ATHENAEUM_SCALE_URL=\"<bootstrap URL>\" npx playwright test e2e/scale.spec.ts"
 
 .PHONY: lint
-lint: ## Vet Go sources and check formatting
+lint: dist-placeholder ## Vet Go sources and check formatting
 	$(GO) vet ./...
 	@unformatted=$$(gofmt -l . | grep -v '^web/node_modules' || true); \
 	if [ -n "$$unformatted" ]; then \

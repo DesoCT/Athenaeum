@@ -2,10 +2,14 @@
 // so that a release is a single Go executable (constitution C6, requirement
 // N4, acceptance A1).
 //
-// dist/ is produced by `npm run build` in this directory and is overwritten on
-// every frontend build. Only .gitkeep is tracked; the Makefile builds the
-// frontend before the Go binary. If dist/index.html is absent the server says
-// so explicitly rather than serving a blank page.
+// dist/ is produced by `npm run build` in this directory. Nothing in it is
+// tracked: Vite's emptyOutDir deletes the directory contents on every build, so
+// a committed placeholder would not survive. Because go:embed resolves at
+// compile time and fails on a missing directory, the Makefile's
+// dist-placeholder target creates web/dist before any Go command runs.
+//
+// If dist/index.html is absent the server says so explicitly rather than
+// serving a blank page.
 package web
 
 import (
