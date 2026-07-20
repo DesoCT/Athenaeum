@@ -21,6 +21,7 @@ import (
 	"athenaeum/internal/httpapi"
 	"athenaeum/internal/security"
 	"athenaeum/internal/session"
+	"athenaeum/internal/watcher"
 	"athenaeum/internal/workspace"
 	"athenaeum/web"
 )
@@ -97,6 +98,15 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
+	// The watcher is advisory: a failure costs live updates, never correctness,
+	// so it must not stop a workspace opening (spec 02 section 3.4).
+	var changeWatcher *watcher.Watcher
+	if w, err := watcher.New(ws, opts.Logger); err != nil {
+		opts.Logger.Warn("live change notifications unavailable", "error", err)
+	} else {
+		changeWatcher = w
+	}
+
 	sessions, err := newSessions(opts)
 	if err != nil {
 		return err
@@ -136,6 +146,7 @@ func Run(ctx context.Context, opts Options) error {
 			Documents:     docs,
 			Recovery:      recovery,
 			Assets:        assetService,
+			Watcher:       changeWatcher,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -153,6 +164,10 @@ func Run(ctx context.Context, opts Options) error {
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if changeWatcher != nil {
+		go changeWatcher.Run(ctx)
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

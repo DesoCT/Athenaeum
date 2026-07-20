@@ -5,6 +5,7 @@
     getDocument,
     listRecovery,
     discardRecovery,
+    subscribeToChanges,
     ApiError,
     type RecoveryBuffer,
   } from "./api/client";
@@ -36,6 +37,10 @@
   let recoveryBuffers = $state<RecoveryBuffer[]>([]);
   let recoveryDismissed = $state(false);
   let restored = $state<{ id: string; content: string } | null>(null);
+
+  // Latest on-disk version per document, as reported by the watcher. The
+  // document view decides what to do with it (E1 reloads, E2 flags).
+  let diskVersions = $state<Record<string, string>>({});
   let expanded = $state(new SvelteSet<string>());
 
   // Svelte 5 needs a reactive Set; a plain Set does not trigger updates.
@@ -106,6 +111,29 @@
 
   $effect(() => {
     void boot();
+  });
+
+  // Live change notifications. The stream is advisory: losing it costs
+  // freshness, never correctness.
+  $effect(() => {
+    const unsubscribe = subscribeToChanges((changes) => {
+      const next = { ...diskVersions };
+      let treeStale = false;
+
+      for (const change of changes) {
+        if (change.kind === "removed" || change.kind === "created") treeStale = true;
+        if (change.version) next[change.document_id] = change.version;
+      }
+      diskVersions = next;
+
+      // A creation or removal changes the tree, so re-list quietly.
+      if (treeStale) {
+        void listDocuments()
+          .then((docs) => (documents = docs))
+          .catch(() => {});
+      }
+    });
+    return unsubscribe;
   });
 </script>
 
@@ -182,6 +210,7 @@
           document={activeDoc}
           capabilities={workspace.capabilities}
           restoredContent={restored?.id === activeDoc.id ? restored.content : null}
+          diskVersion={diskVersions[activeDoc.id] ?? null}
           onreload={async () => {
             if (activeId) activeDoc = await getDocument(activeId);
           }}

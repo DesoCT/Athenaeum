@@ -24,9 +24,20 @@
      * implicitly (acceptance E3).
      */
     restoredContent?: string | null;
+    /**
+     * The version now on disk, when the watcher has reported a change the
+     * editor has not yet taken in. Drives the E1 and E2 split below.
+     */
+    diskVersion?: string | null;
   }
 
-  let { document: doc, capabilities, onreload, restoredContent = null }: Props = $props();
+  let {
+    document: doc,
+    capabilities,
+    onreload,
+    restoredContent = null,
+    diskVersion = null,
+  }: Props = $props();
 
   /** View modes (spec 04 section 6). Split is the default. */
   type Mode = "split" | "source" | "preview";
@@ -98,6 +109,26 @@
   });
 
   const dirty = $derived(buffer !== doc.content || saveState.kind === "dirty");
+
+  /**
+   * An external change was reported and the editor has not caught up.
+   *
+   * A clean editor reloads on its own with a notice; a dirty one must not, so
+   * it is flagged and left alone until the user decides (R6, E1 and E2).
+   */
+  const changedOnDisk = $derived(diskVersion != null && diskVersion !== baseVersion);
+  let reloadNotice = $state<string | null>(null);
+
+  $effect(() => {
+    if (!changedOnDisk) return;
+    if (dirty || saveState.kind === "conflict" || saveState.kind === "saving") return;
+
+    // Clean: adopt the new content and say so, without interrupting anything.
+    void onreload().then(() => {
+      reloadNotice = "This document changed on disk and was reloaded.";
+      setTimeout(() => (reloadNotice = null), 6000);
+    });
+  });
   const canEdit = $derived(!doc.read_only && doc.writable);
 
   function onchange(next: string): void {
@@ -235,6 +266,7 @@
       case "conflict":
         return "Conflict";
       default:
+        if (dirty && changedOnDisk) return "Changed on disk";
         return dirty ? "Unsaved changes" : "Saved";
     }
   });
@@ -287,6 +319,21 @@
   {#if doc.warnings && doc.warnings.length > 0}
     <aside class="doc-warnings" role="status">
       {#each doc.warnings as warning}<p>{warning}</p>{/each}
+    </aside>
+  {/if}
+
+  {#if reloadNotice}
+    <aside class="notice" role="status">
+      <p>{reloadNotice}</p>
+    </aside>
+  {/if}
+
+  {#if dirty && changedOnDisk && saveState.kind !== "conflict"}
+    <aside class="doc-warnings" role="status">
+      <p>
+        This document changed on disk while you have unsaved edits. Nothing has
+        been overwritten. Saving will show both versions so you can choose.
+      </p>
     </aside>
   {/if}
 
@@ -502,6 +549,19 @@
 
   .doc-warnings p,
   .save-failed p {
+    margin: 0;
+  }
+
+  .notice {
+    margin-bottom: 0.75rem;
+    padding: 0.5rem 0.9rem;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+  }
+
+  .notice p {
     margin: 0;
   }
 

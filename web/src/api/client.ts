@@ -149,6 +149,37 @@ export async function discardRecovery(documentId: string): Promise<void> {
   });
 }
 
+export interface DocumentChange {
+  document_id: string;
+  kind: "modified" | "created" | "removed";
+  version?: string;
+}
+
+/**
+ * subscribeToChanges opens the server-sent event stream.
+ *
+ * The stream only makes the UI live. Correctness never depends on it: a missed
+ * event is caught by the version check on the next read or save.
+ */
+export function subscribeToChanges(
+  onChanges: (changes: DocumentChange[]) => void,
+): () => void {
+  const source = new EventSource(`${API_PREFIX}/events`, { withCredentials: true });
+
+  source.addEventListener("documents", (event) => {
+    try {
+      onChanges(JSON.parse((event as MessageEvent).data) as DocumentChange[]);
+    } catch {
+      // A malformed frame is ignored rather than breaking the stream.
+    }
+  });
+
+  // EventSource reconnects on its own; nothing to do but avoid noise.
+  source.onerror = () => {};
+
+  return () => source.close();
+}
+
 export interface AssetResult {
   asset_id: string;
   markdown: string;
