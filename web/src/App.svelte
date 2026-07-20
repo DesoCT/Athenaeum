@@ -144,7 +144,7 @@
         <div class="document">
           <header class="document-header">
             <div>
-              <h1>{activeDoc.title}</h1>
+              <p class="doc-title">{activeDoc.title}</p>
               <p class="path">{activeDoc.id}</p>
             </div>
             <div class="states">
@@ -310,10 +310,11 @@
     margin-bottom: 1rem;
   }
 
-  .document-header h1 {
+  .doc-title {
     margin: 0;
     font-size: 1.15rem;
     font-weight: 600;
+    color: var(--text-primary);
   }
 
   .path {

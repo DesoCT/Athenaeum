@@ -57,6 +57,13 @@ test-web: ## Type-check and unit-test the frontend
 	cd web && $(NPM) run check
 	cd web && $(NPM) test
 
+.PHONY: test-browser
+test-browser: build ## Run browser tests against a running instance (needs ATHENAEUM_URL)
+	@if [ -z "$$ATHENAEUM_URL" ]; then \
+		echo "ATHENAEUM_URL must be the bootstrap URL of a running instance"; exit 1; \
+	fi
+	cd web && $(NPM) run test:browser
+
 .PHONY: test-acceptance
 test-acceptance: build ## Run acceptance tests against the release binary
 	ATHENAEUM_BINARY=$(CURDIR)/$(BINARY) $(GO) test ./test/acceptance/... -count=1 -v

@@ -66,12 +66,13 @@ type Document struct {
 
 // Service reads documents from a workspace.
 type Service struct {
-	ws *workspace.Workspace
+	ws     *workspace.Workspace
+	titles *titleCache
 }
 
 // New returns a document service bound to a workspace.
 func New(ws *workspace.Workspace) *Service {
-	return &Service{ws: ws}
+	return &Service{ws: ws, titles: newTitleCache()}
 }
 
 // Read loads one document by ID.

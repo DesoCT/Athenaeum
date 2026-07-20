@@ -7,29 +7,73 @@
  * are served from the embedded frontend, so they work offline (C5, A2).
  */
 
-/** Languages registered for highlighting. Kept deliberately small (C6). */
-const LANGUAGES = [
-  "bash", "c", "cpp", "csharp", "css", "diff", "dockerfile", "go", "graphql",
-  "html", "ini", "java", "javascript", "json", "kotlin", "lua", "makefile",
-  "markdown", "nix", "perl", "php", "python", "ruby", "rust", "scss", "shell",
-  "sql", "swift", "toml", "typescript", "xml", "yaml",
-];
+/**
+ * Languages registered for highlighting, kept deliberately small (C6).
+ *
+ * Each import is written out in full rather than built from a template string.
+ * Vite cannot statically analyse `import(`.../${name}`)`, so a templated
+ * version produces no chunks at all: every language fails to load, hljs falls
+ * back to highlightAuto with nothing registered, and code renders unhighlighted
+ * with no error anywhere. An explicit map is verbose but is the only form the
+ * bundler can follow.
+ */
+const LANGUAGE_LOADERS: Record<string, () => Promise<{ default: unknown }>> = {
+  bash: () => import("highlight.js/lib/languages/bash"),
+  c: () => import("highlight.js/lib/languages/c"),
+  cpp: () => import("highlight.js/lib/languages/cpp"),
+  csharp: () => import("highlight.js/lib/languages/csharp"),
+  css: () => import("highlight.js/lib/languages/css"),
+  diff: () => import("highlight.js/lib/languages/diff"),
+  dockerfile: () => import("highlight.js/lib/languages/dockerfile"),
+  go: () => import("highlight.js/lib/languages/go"),
+  graphql: () => import("highlight.js/lib/languages/graphql"),
+  ini: () => import("highlight.js/lib/languages/ini"),
+  java: () => import("highlight.js/lib/languages/java"),
+  javascript: () => import("highlight.js/lib/languages/javascript"),
+  json: () => import("highlight.js/lib/languages/json"),
+  kotlin: () => import("highlight.js/lib/languages/kotlin"),
+  lua: () => import("highlight.js/lib/languages/lua"),
+  makefile: () => import("highlight.js/lib/languages/makefile"),
+  markdown: () => import("highlight.js/lib/languages/markdown"),
+  nix: () => import("highlight.js/lib/languages/nix"),
+  perl: () => import("highlight.js/lib/languages/perl"),
+  php: () => import("highlight.js/lib/languages/php"),
+  python: () => import("highlight.js/lib/languages/python"),
+  ruby: () => import("highlight.js/lib/languages/ruby"),
+  rust: () => import("highlight.js/lib/languages/rust"),
+  scss: () => import("highlight.js/lib/languages/scss"),
+  shell: () => import("highlight.js/lib/languages/shell"),
+  sql: () => import("highlight.js/lib/languages/sql"),
+  swift: () => import("highlight.js/lib/languages/swift"),
+  typescript: () => import("highlight.js/lib/languages/typescript"),
+  xml: () => import("highlight.js/lib/languages/xml"),
+  yaml: () => import("highlight.js/lib/languages/yaml"),
+};
 
 let highlighter: typeof import("highlight.js").default | null = null;
 
 async function loadHighlighter() {
   if (highlighter) return highlighter;
   const { default: hljs } = await import("highlight.js/lib/core");
+
+  const failures: string[] = [];
   await Promise.all(
-    LANGUAGES.map(async (name) => {
+    Object.entries(LANGUAGE_LOADERS).map(async ([name, load]) => {
       try {
-        const mod = await import(`highlight.js/lib/languages/${name}`);
+        const mod = (await load()) as { default: never };
         hljs.registerLanguage(name, mod.default);
       } catch {
-        // A language that cannot be loaded simply stays unhighlighted.
+        failures.push(name);
       }
     }),
   );
+
+  // Silence here would hide a total highlighting failure, which is how the
+  // templated-import bug went unnoticed.
+  if (failures.length > 0) {
+    console.warn(`Athenaeum: ${failures.length} highlight language(s) failed to load:`, failures);
+  }
+
   highlighter = hljs;
   return hljs;
 }

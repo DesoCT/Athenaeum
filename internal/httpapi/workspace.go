@@ -116,7 +116,13 @@ func (s *Server) handleDocumentList(w http.ResponseWriter, r *http.Request) {
 			"No workspace is open in this process.")
 		return
 	}
-	s.writeJSON(w, http.StatusOK, documentListResponse{Documents: s.opts.Workspace.Documents()})
+	docs := s.opts.Workspace.Documents()
+	// Enumeration knows only file names; titles come from front matter or the
+	// first heading (R2, spec 04 section 4.2).
+	if s.opts.Documents != nil {
+		s.opts.Documents.EnrichTitles(docs)
+	}
+	s.writeJSON(w, http.StatusOK, documentListResponse{Documents: docs})
 }
 
 func (s *Server) handleDocumentRead(w http.ResponseWriter, r *http.Request) {

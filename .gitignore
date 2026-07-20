@@ -27,3 +27,7 @@
 
 # Self-hosted workspace sidecars, if this repo is opened in Athenaeum itself.
 /.athenaeum/
+
+# Playwright
+/web/test-results/
+/web/playwright-report/

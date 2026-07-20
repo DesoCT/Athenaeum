@@ -10,9 +10,11 @@
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
     "build:fast": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tsconfig/svelte": "^5.0.4",
     "@types/markdown-it": "^14.1.2",

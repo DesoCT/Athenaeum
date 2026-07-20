@@ -8,5 +8,6 @@ export default defineConfig({
     // reconciliation, so tests need a document.
     environment: "jsdom",
     include: ["src/**/*.test.ts"],
+    exclude: ["e2e/**"],
   },
 });
