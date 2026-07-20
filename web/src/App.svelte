@@ -267,6 +267,10 @@
     loadedDocs = rest;
     delete dirtyDocs[id];
     delete tabView[id];
+    // The restored view state has served its purpose. Keeping it would make a
+    // tab reopened later in the same session jump to the scroll position it
+    // had in the *previous* one, which reads as the interface losing its place.
+    delete restoring[id];
 
     if (activeId === id) {
       activeId = openTabs[openTabs.length - 1] ?? null;

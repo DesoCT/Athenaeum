@@ -8,14 +8,22 @@ Athenaeum is not a chat product, a memory system, a semantic knowledge graph, a
 collaboration service, a cloud service, a WYSIWYG editor, or a Git client. It is
 useful with no language model, no API key, and no internet connection.
 
-**Status:** v0.1 in development. Phase 0 (repository foundation) is complete.
+**Status:** v0.1 in development. Phases 0 to 3 are complete: the repository
+foundation, workspace loading and the read-only Map Room, editing with atomic
+saves and crash recovery, and workspace search with session restoration.
+Annotations, notes, relationships, and the Git panel follow in later phases.
+
+Measured startup, responsiveness, and scale numbers are in
+[docs/measurements.md](docs/measurements.md).
 
 ## Requirements
 
 - Go 1.26 or newer
 - Node.js 22 or newer — build time only; the release binary needs neither
   Node.js nor npm
-- `git` on PATH — optional, for the read-only Git context in Phase 5
+- `git` on PATH — optional. It supplies per-file state for the search Git
+  filter, and the read-only Git panel in Phase 5. Without it, search works
+  unchanged and the Git filter reports itself unavailable.
 
 ## Quick start
 
