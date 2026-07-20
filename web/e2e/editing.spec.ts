@@ -120,3 +120,44 @@ test.describe("Editing", () => {
     await page.screenshot({ path: "e2e/screenshots/06-split-editing.png" });
   });
 });
+
+test.describe("Preview mode", () => {
+  test.skip(!BOOTSTRAP || !SCRATCH, "ATHENAEUM_URL and ATHENAEUM_SCRATCH are required");
+
+  test.beforeEach(async ({ page }) => {
+    writeFileSync(`${SCRATCH}/docs/note.md`, "# Note\n\n## Section\n\nBody.\n");
+    await page.goto(BOOTSTRAP!);
+  });
+
+  // Regression: clicking in the preview switched the view back to split, which
+  // yanked the user out of a mode they had chosen deliberately.
+  test("clicking in preview-only stays in preview-only", async ({ page }) => {
+    await page.keyboard.press("Control+p");
+    await page.getByLabel("Quick open query").fill("note");
+    await expect(page.getByRole("option").first()).toBeVisible();
+    await page.keyboard.press("Enter");
+
+    await page.getByRole("button", { name: "Preview" }).click();
+    await expect(page.getByLabel("Markdown source")).toHaveCount(0);
+
+    // Click a heading, which is what previously forced split view.
+    await page.getByRole("heading", { name: "Section" }).click();
+
+    await expect(page.getByLabel("Markdown source")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Preview" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  test("clicking a heading in split view still moves the caret", async ({ page }) => {
+    await page.keyboard.press("Control+p");
+    await page.getByLabel("Quick open query").fill("note");
+    await expect(page.getByRole("option").first()).toBeVisible();
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByLabel("Markdown source")).toBeVisible();
+    await page.getByRole("heading", { name: "Section" }).click();
+    await expect(page.getByLabel("Markdown source")).toBeFocused();
+  });
+});

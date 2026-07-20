@@ -302,12 +302,16 @@
     const target = (event.target as HTMLElement)?.closest("[data-line]");
     if (!target) return;
     const line = Number(target.getAttribute("data-line"));
-    if (Number.isFinite(line)) {
-      revealLine = line;
-      if (mode === "preview") mode = "split";
-      // Reset so the same heading can be clicked twice.
-      queueMicrotask(() => (revealLine = null));
-    }
+    if (!Number.isFinite(line)) return;
+
+    // Only move the caret when the editor is actually on screen. Someone in
+    // preview-only chose that deliberately, and yanking them into split view
+    // to reveal a line they cannot see is a worse answer than doing nothing.
+    if (mode === "preview") return;
+
+    revealLine = line;
+    // Reset so the same heading can be clicked twice.
+    queueMicrotask(() => (revealLine = null));
   }
 
   /**
@@ -316,6 +320,45 @@
    * A name collision is never resolved silently: the user is asked, and the
    * server only overwrites when explicitly told to (acceptance I2).
    */
+  /**
+   * Files dropped anywhere on the document surface are stored, including on the
+   * preview and in preview-only mode where no editor exists. Binding the drop
+   * to the textarea alone meant most of the target area silently ignored it.
+   */
+  async function onDocumentDrop(event: DragEvent): Promise<void> {
+    const files = Array.from(event.dataTransfer?.files ?? []).filter((f) =>
+      f.type.startsWith("image/"),
+    );
+    if (files.length === 0 || !canEdit) return;
+    event.preventDefault();
+
+    for (const file of files) {
+      const markdown = await handleFile(file);
+      if (!markdown) continue;
+
+      // The editor inserts at the caret when it is visible. Otherwise append,
+      // so a drop in preview-only mode still lands somewhere predictable
+      // rather than being lost.
+      if (mode === "preview") {
+        const separator = buffer.endsWith("\n") ? "\n" : "\n\n";
+        onchange(buffer + separator + markdown + "\n");
+      } else {
+        pendingInsert = markdown;
+        queueMicrotask(() => (pendingInsert = null));
+      }
+    }
+  }
+
+  function onDocumentDragOver(event: DragEvent): void {
+    if (canEdit && event.dataTransfer?.types.includes("Files")) {
+      event.preventDefault();
+      dragging = true;
+    }
+  }
+
+  let dragging = $state(false);
+  let pendingInsert = $state<string | null>(null);
+
   async function handleFile(file: File): Promise<string | null> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const fileName = file.name || "pasted-image.png";
@@ -373,7 +416,17 @@
 </script>
 
 {#if active}
-<div class="document">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="document"
+  class:dragging
+  ondrop={(e) => {
+    dragging = false;
+    void onDocumentDrop(e);
+  }}
+  ondragover={onDocumentDragOver}
+  ondragleave={() => (dragging = false)}
+>
   <header class="document-header">
     <div class="identity">
       <p class="doc-title">{doc.title}</p>
@@ -473,6 +526,7 @@
           {onchange}
           onsave={() => save()}
           onfile={handleFile}
+          {pendingInsert}
           {revealLine}
           {highlightLine}
           online={(line) => (sourceLine = line)}
@@ -507,6 +561,11 @@
 {/if}
 
 <style>
+  .document.dragging {
+    outline: 2px dashed var(--accent);
+    outline-offset: -6px;
+  }
+
   .document {
     display: flex;
     flex-direction: column;

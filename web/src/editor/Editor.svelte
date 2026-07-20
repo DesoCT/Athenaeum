@@ -21,6 +21,8 @@
     onfile?: (file: File) => Promise<string | null>;
     /** 1-based line to reveal, set when navigating from the preview. */
     revealLine?: number | null;
+    /** Markdown to insert at the caret, set when a file is dropped. */
+    pendingInsert?: string | null;
     /**
      * 1-based line to reveal *and* highlight, set when opening a search result.
      * The highlight is temporary: it points the eye at the match and then gets
