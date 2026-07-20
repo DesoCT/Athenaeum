@@ -1,6 +1,6 @@
 # ADR-0001: Bootstrap token lifetime
 
-- **Status:** Proposed — owner approval required
+- **Status:** Accepted — option A approved by the owner 2026-07-20
 - **Date:** 2026-07-18
 - **Affects:** R14, spec 03 section 10, acceptance A3
 - **Raised by:** Phase 0 implementation
@@ -54,12 +54,14 @@ so it is the owner's decision, not the implementer's.
 | B | Single-use token; re-bootstrap requires restart | Hostile to normal use |
 | C | Single-use token plus a `--reissue-token` command or a signal that prints a fresh URL | Best of both; more surface to build and test |
 
-## Recommendation
+## Decision
 
-Adopt **A** for v0.1 and revisit if remote mode ever shares the same bootstrap
-path. If the owner prefers a closed exposure window, **C** is the right target
-and should be scheduled into Phase 6 alongside the rest of remote hardening —
-not **B**, which degrades the core local workflow that constitution C1 protects.
+**Option A is adopted for v0.1**, approved by the owner on 2026-07-20.
+
+Revisit if remote mode ever shares the same bootstrap path. If a closed
+exposure window becomes desirable, **C** is the target and belongs in Phase 6
+alongside the rest of remote hardening — not **B**, which degrades the core
+local workflow that constitution C1 protects.
 
 ## Impact if changed
 

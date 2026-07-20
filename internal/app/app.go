@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"athenaeum/internal/config"
+	"athenaeum/internal/documents"
 	"athenaeum/internal/httpapi"
 	"athenaeum/internal/security"
+	"athenaeum/internal/workspace"
 	"athenaeum/web"
 )
 
@@ -39,6 +41,9 @@ type Options struct {
 	Logger        *slog.Logger
 	// Stdout receives the launch banner. Tests may substitute a buffer.
 	Stdout *os.File
+
+	// documentCount is filled in after enumeration, for the launch banner.
+	documentCount int
 }
 
 // Run starts the server and blocks until the context is cancelled or an
@@ -54,6 +59,22 @@ func Run(ctx context.Context, opts Options) error {
 	if err := validateRuntimeMode(&opts); err != nil {
 		return err
 	}
+
+	// Runtime checks that depend on launch options, such as raw HTML combined
+	// with remote mode (spec 05 section 6).
+	if diags := opts.Config.ValidateRuntime(opts.Remote); diags.HasErrors() {
+		diags.Write(os.Stderr)
+		return errors.New("the workspace configuration is not safe for this launch mode")
+	}
+
+	ws, err := workspace.Open(opts.Config)
+	if err != nil {
+		return err
+	}
+	for _, d := range ws.Diagnostics() {
+		opts.Logger.Warn("workspace", "field", d.Field, "detail", d.Message)
+	}
+	docs := documents.New(ws)
 
 	sessions, err := newSessions(opts)
 	if err != nil {
@@ -90,11 +111,14 @@ func Run(ctx context.Context, opts Options) error {
 			WorkspaceName: opts.Config.Name,
 			Remote:        opts.Remote,
 			Logger:        opts.Logger,
+			Workspace:     ws,
+			Documents:     docs,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	launchURL := origin + httpapi.BootstrapPath + "?t=" + sessions.BootstrapToken()
+	opts.documentCount = ws.Count()
 	printBanner(opts, origin, launchURL)
 
 	if opts.OpenBrowser {
@@ -206,6 +230,7 @@ func printBanner(opts Options, origin, launchURL string) {
 	fmt.Fprintf(opts.Stdout, "Athenaeum %s\n", opts.Version)
 	fmt.Fprintf(opts.Stdout, "  workspace  %s\n", opts.Config.Name)
 	fmt.Fprintf(opts.Stdout, "  root       %s\n", opts.Config.AbsRoot)
+	fmt.Fprintf(opts.Stdout, "  documents  %d\n", opts.documentCount)
 	fmt.Fprintf(opts.Stdout, "  listening  %s\n", origin)
 	if opts.Remote {
 		// Spec 03 section 11: no automatic browser bootstrap carrying the

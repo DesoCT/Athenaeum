@@ -18,6 +18,7 @@ import (
 
 	"athenaeum/internal/app"
 	"athenaeum/internal/config"
+	"athenaeum/internal/workspace"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
@@ -129,6 +130,12 @@ func runServer(args []string, defaultOpen bool) error {
 	if err != nil {
 		return err
 	}
+	if diags := cfg.Validate(); diags.HasErrors() {
+		diags.Write(os.Stderr)
+		errCount, _ := diags.Counts()
+		return fmt.Errorf("%s is not valid: %d error(s); run `athenaeum validate` for detail",
+			cfg.SourcePath, errCount)
+	}
 	if f.safeMode {
 		cfg.ApplySafeMode()
 		logger.Info("safe mode active: Git, remote assets, raw HTML, and Mermaid are disabled")
@@ -160,8 +167,31 @@ func runValidate(args []string) error {
 	path := firstArg(positional, os.Getenv("ATHENAEUM_CONFIG"))
 	cfg, err := config.Load(path)
 	if err != nil {
-		// Non-zero exit with an actionable message (acceptance B4).
+		// Parse-level failure: non-zero exit with an actionable message.
 		return err
+	}
+
+	// Structural validation, then enumeration, which adds warnings that need
+	// the filesystem such as include patterns matching nothing.
+	diags := cfg.Validate()
+
+	var ws *workspace.Workspace
+	if !diags.HasErrors() {
+		ws, err = workspace.Open(cfg)
+		if err != nil {
+			return err
+		}
+		diags = append(diags, ws.Diagnostics()...)
+	}
+
+	errCount, warnCount := diags.Counts()
+	if len(diags) > 0 {
+		diags.Write(os.Stderr)
+		fmt.Fprintln(os.Stderr)
+	}
+
+	if errCount > 0 {
+		return fmt.Errorf("%s is not valid: %d error(s), %d warning(s)", cfg.SourcePath, errCount, warnCount)
 	}
 
 	fmt.Printf("configuration is valid\n")
@@ -171,6 +201,12 @@ func runValidate(args []string) error {
 	fmt.Printf("  include    %d pattern(s)\n", len(cfg.Include))
 	fmt.Printf("  exclude    %d pattern(s)\n", len(cfg.Exclude))
 	fmt.Printf("  groups     %d\n", len(cfg.Groups))
+	if ws != nil {
+		fmt.Printf("  documents  %d\n", ws.Count())
+	}
+	if warnCount > 0 {
+		fmt.Printf("  warnings   %d (listed above)\n", warnCount)
+	}
 	return nil
 }
 

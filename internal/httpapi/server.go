@@ -10,7 +10,9 @@ import (
 	"path"
 	"strings"
 
+	"athenaeum/internal/documents"
 	"athenaeum/internal/security"
+	"athenaeum/internal/workspace"
 )
 
 // APIPrefix is the versioned API mount point (spec 02 section 5).
@@ -29,6 +31,11 @@ type Options struct {
 	WorkspaceName string
 	Remote        bool
 	Logger        *slog.Logger
+
+	// Workspace and Documents are nil only in tests that exercise the
+	// transport layer alone.
+	Workspace *workspace.Workspace
+	Documents *documents.Service
 }
 
 // Server routes API and frontend requests behind the session and origin
@@ -53,6 +60,11 @@ func New(opts Options) *Server {
 func (s *Server) routes() {
 	s.mux.HandleFunc(BootstrapPath, s.handleBootstrap)
 	s.mux.Handle(APIPrefix+"/health", s.guard(http.HandlerFunc(s.handleHealth)))
+	s.mux.Handle("GET "+APIPrefix+"/workspace", s.guard(http.HandlerFunc(s.handleWorkspace)))
+	s.mux.Handle("GET "+APIPrefix+"/documents", s.guard(http.HandlerFunc(s.handleDocumentList)))
+	// The id wildcard spans the remaining path because a document ID contains
+	// slashes, for example "docs/design/rendering.md".
+	s.mux.Handle("GET "+APIPrefix+"/documents/{id...}", s.guard(http.HandlerFunc(s.handleDocumentRead)))
 	s.mux.Handle("/", s.guard(http.HandlerFunc(s.handleFrontend)))
 }
 
@@ -64,6 +76,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+
+	// Reject traversal on the raw path before ServeMux cleans it, so a crafted
+	// path returns the documented path-security error instead of a redirect
+	// (acceptance B2).
+	if code, ok := inspectRawPath(r.URL.EscapedPath()); !ok {
+		s.writeErrorWithDetails(w, r, http.StatusBadRequest, code,
+			"That request path is not valid for this workspace.", nil)
+		return
+	}
+
 	s.mux.ServeHTTP(w, r)
 }
 
@@ -163,8 +185,12 @@ type apiErrorBody struct {
 }
 
 func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	s.writeErrorWithDetails(w, r, status, code, message, nil)
+}
+
+func (s *Server) writeErrorWithDetails(w http.ResponseWriter, r *http.Request, status int, code, message string, details map[string]string) {
 	if strings.HasPrefix(r.URL.Path, APIPrefix) || r.Header.Get("Accept") == "application/json" {
-		s.writeJSON(w, status, apiError{Error: apiErrorBody{Code: code, Message: message}})
+		s.writeJSON(w, status, apiError{Error: apiErrorBody{Code: code, Message: message, Details: details}})
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")

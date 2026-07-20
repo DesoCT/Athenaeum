@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -42,6 +44,10 @@ type Config struct {
 	SourcePath string `toml:"-"`
 	// AbsRoot is the canonicalised absolute workspace root.
 	AbsRoot string `toml:"-"`
+
+	// undecoded holds keys present in the file that no field claimed. Spec 05
+	// section 6 makes these errors, reported by Validate.
+	undecoded []string
 }
 
 // Documents holds renderer and editor limits (spec 05 section 2).
@@ -158,9 +164,19 @@ func resolveConfigPath(path string) (string, error) {
 	return abs, nil
 }
 
-// finalise applies the structural checks Phase 0 needs and canonicalises the
-// workspace root.
+// finalise applies the checks that must pass before anything else can run, and
+// canonicalises the workspace root. Semantic validation lives in Validate.
 func (c *Config) finalise(md toml.MetaData) error {
+	for _, key := range md.Undecoded() {
+		c.undecoded = append(c.undecoded, key.String())
+	}
+	// relationships.front_matter is read by the relationships service in
+	// Phase 4 and has no field on Config yet. Accept it now rather than
+	// reporting the shipped example configuration as invalid.
+	c.undecoded = slices.DeleteFunc(c.undecoded, func(key string) bool {
+		return key == "relationships" || strings.HasPrefix(key, "relationships.")
+	})
+
 	if !md.IsDefined("schema_version") {
 		return errors.New("config: schema_version is required (spec 05 section 6)")
 	}
