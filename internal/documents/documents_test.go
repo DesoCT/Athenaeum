@@ -37,6 +37,12 @@ func serviceWithConfig(t *testing.T, configBody string, files map[string]string)
 	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	return serviceFromConfigPath(t, configPath)
+}
+
+// serviceFromConfigPath opens a workspace from an already-written config file.
+func serviceFromConfigPath(t *testing.T, configPath string) *Service {
+	t.Helper()
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)

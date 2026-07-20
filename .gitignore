@@ -24,3 +24,6 @@
 # Shared sidecars under .athenaeum/shared/ are intended to be committed
 # (spec 03 section 1), so only local state is ignored here.
 /.athenaeum/local/
+
+# Self-hosted workspace sidecars, if this repo is opened in Athenaeum itself.
+/.athenaeum/

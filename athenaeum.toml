@@ -1,0 +1,72 @@
+# Athenaeum's own workspace: the specification pack, ADRs, and project docs.
+#
+# Dogfooding. `athenaeum open athenaeum.toml` from the repository root opens the
+# documents that define the product.
+
+schema_version = 1
+name = "Athenaeum"
+root = "."
+
+include = [
+  "README.md",
+  "docs/**/*.md",
+]
+
+exclude = [
+  "**/node_modules/**",
+  "**/vendor/**",
+  ".git/**",
+  "web/dist/**",
+]
+
+[documents]
+raw_html = false
+wiki_links = true
+footnotes = true
+callouts = true
+math = true
+mermaid = true
+front_matter = ["yaml", "toml"]
+max_editable_bytes = 10485760
+large_file_warning_bytes = 2097152
+
+[assets]
+directory = "docs/assets"
+allow_remote = false
+paste_naming = "date-hash"
+
+[annotations]
+shared_directory = ".athenaeum/shared"
+default_visibility = "personal"
+
+[search]
+enabled = true
+index_code_blocks = true
+index_front_matter = true
+
+[git]
+enabled = true
+
+# Deliberately narrow: the normative specification pack is read-only, so an
+# accidental write can never alter the build contract. ADRs and notes are
+# writable because that is where new decisions get recorded.
+[security]
+writable = [
+  "docs/adr/**/*.md",
+  "docs/assets/**",
+  ".athenaeum/shared/**",
+]
+allow_external_reads = false
+
+[[groups]]
+id = "specification"
+title = "Specification"
+patterns = ["docs/spec/**/*.md"]
+
+[[groups]]
+id = "decisions"
+title = "Decisions"
+patterns = ["docs/adr/**/*.md"]
+
+[relationships.front_matter]
+fields = ["related", "implements", "supersedes"]
