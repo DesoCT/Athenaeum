@@ -65,6 +65,7 @@ func (s *Server) routes() {
 	// The id wildcard spans the remaining path because a document ID contains
 	// slashes, for example "docs/design/rendering.md".
 	s.mux.Handle("GET "+APIPrefix+"/documents/{id...}", s.guard(http.HandlerFunc(s.handleDocumentRead)))
+	s.mux.Handle("PUT "+APIPrefix+"/documents/{id...}", s.guard(http.HandlerFunc(s.handleDocumentSave)))
 	s.mux.Handle("/", s.guard(http.HandlerFunc(s.handleFrontend)))
 }
 

@@ -1,5 +1,7 @@
 import type {
   ApiErrorBody,
+  ConflictInfo,
+  SaveResult,
   DocumentDetail,
   DocumentSummary,
   Health,
@@ -76,6 +78,58 @@ export async function listDocuments(): Promise<DocumentSummary[]> {
  * traversal on the raw path regardless.
  */
 export function getDocument(id: string): Promise<DocumentDetail> {
-  const encoded = id.split("/").map(encodeURIComponent).join("/");
-  return request<DocumentDetail>(`/documents/${encoded}`);
+  return request<DocumentDetail>(`/documents/${encodePath(id)}`);
+}
+
+function encodePath(id: string): string {
+  return id.split("/").map(encodeURIComponent).join("/");
+}
+
+/**
+ * ConflictError is raised when the file changed on disk under an unsaved
+ * buffer. It carries the disk version so the comparison view needs no second
+ * request that could race again (R6).
+ */
+export class ConflictError extends ApiError {
+  readonly conflict: ConflictInfo;
+
+  constructor(status: number, body: ApiErrorBody, conflict: ConflictInfo) {
+    super(status, body);
+    this.name = "ConflictError";
+    this.conflict = conflict;
+  }
+}
+
+export interface SaveOptions {
+  content: string;
+  /** The version the editor last observed. Omitted only when forcing. */
+  version?: string;
+  /** Set only after the user chose "keep my version" in the conflict view. */
+  force?: boolean;
+  lineEnding?: string;
+  keepBOM?: boolean;
+}
+
+export async function saveDocument(id: string, options: SaveOptions): Promise<SaveResult> {
+  const response = await fetch(`${API_PREFIX}/documents/${encodePath(id)}`, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      content: options.content,
+      version: options.version ?? "",
+      force: options.force ?? false,
+      line_ending: options.lineEnding ?? "",
+      keep_bom: options.keepBOM ?? false,
+    }),
+  });
+
+  if (response.status === 409) {
+    const body = (await response.json()) as { error: ApiErrorBody; conflict: ConflictInfo };
+    throw new ConflictError(409, body.error, body.conflict);
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, await readError(response));
+  }
+  return (await response.json()) as SaveResult;
 }

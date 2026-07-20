@@ -80,6 +80,20 @@ export interface DocumentDetail extends DocumentSummary {
   warnings?: string[];
 }
 
+/** The result of a successful save. */
+export interface SaveResult {
+  id: string;
+  version: string;
+  size: number;
+  line_ending: string;
+}
+
+/** The disk side of a save conflict (R6). */
+export interface ConflictInfo {
+  current_version: string;
+  current_content: string;
+}
+
 /** The stable error object every endpoint uses on failure. */
 export interface ApiErrorBody {
   code: string;

@@ -5,7 +5,7 @@
   import FileTree from "./map-room/FileTree.svelte";
   import QuickOpen from "./map-room/QuickOpen.svelte";
   import MapRoomHome from "./map-room/MapRoomHome.svelte";
-  import Preview from "./renderer/Preview.svelte";
+  import DocumentView from "./editor/DocumentView.svelte";
   import Outline from "./components/Outline.svelte";
   import StatusBar from "./components/StatusBar.svelte";
 
@@ -141,33 +141,13 @@
           <button type="button" onclick={closeDocument}>Back to the Map Room</button>
         </section>
       {:else if activeDoc && workspace}
-        <div class="document">
-          <header class="document-header">
-            <div>
-              <p class="doc-title">{activeDoc.title}</p>
-              <p class="path">{activeDoc.id}</p>
-            </div>
-            <div class="states">
-              <span class="state" class:readonly={activeDoc.read_only}>
-                {activeDoc.read_only ? "Read-only" : "Saved"}
-              </span>
-              <span class="state muted">{activeDoc.line_ending.toUpperCase()}</span>
-              {#if activeDoc.encoding !== "utf-8"}
-                <span class="state warn">{activeDoc.encoding}</span>
-              {/if}
-            </div>
-          </header>
-
-          {#if activeDoc.warnings && activeDoc.warnings.length > 0}
-            <aside class="doc-warnings" role="status">
-              {#each activeDoc.warnings as warning}
-                <p>{warning}</p>
-              {/each}
-            </aside>
-          {/if}
-
-          <Preview document={activeDoc} capabilities={workspace.capabilities} />
-        </div>
+        <DocumentView
+          document={activeDoc}
+          capabilities={workspace.capabilities}
+          onreload={async () => {
+            if (activeId) activeDoc = await getDocument(activeId);
+          }}
+        />
       {:else if workspace}
         <MapRoomHome {workspace} {documents} onopen={open} />
       {/if}
@@ -287,6 +267,7 @@
 
   .document-surface {
     min-width: 0;
+    min-height: 0;
     overflow-y: auto;
     background-color: var(--surface-table);
     background-image:
@@ -296,72 +277,24 @@
     background-position: -1px -1px;
   }
 
-  .document {
-    max-width: 58rem;
-    margin: 0 auto;
-    padding: 1.5rem;
-  }
 
-  .document-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 1rem;
-  }
+  
 
-  .doc-title {
-    margin: 0;
-    font-size: 1.15rem;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
+  
 
-  .path {
-    margin: 0.15rem 0 0;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
+  
 
-  .states {
-    display: flex;
-    gap: 0.4rem;
-    flex-shrink: 0;
-  }
+  
 
-  .state {
-    padding: 0.1rem 0.45rem;
-    border: 1px solid var(--ok);
-    border-radius: 2px;
-    color: var(--ok);
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-  }
+  
 
-  .state.readonly,
-  .state.muted {
-    border-color: var(--line-strong);
-    color: var(--text-muted);
-  }
+  
 
-  .state.warn {
-    border-color: var(--warn);
-    color: var(--warn);
-  }
+  
 
-  .doc-warnings {
-    margin-bottom: 1rem;
-    padding: 0.6rem 0.9rem;
-    border: 1px solid var(--warn);
-    border-radius: var(--radius);
-    font-size: 0.85rem;
-    color: var(--warn);
-  }
+  
 
-  .doc-warnings p {
-    margin: 0;
-  }
+  
 
   .card {
     max-width: 40rem;
