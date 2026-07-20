@@ -4,7 +4,33 @@ Athenaeum is a single executable with the frontend embedded. Copying that one
 file to a machine is the whole installation: no Node.js, no npm, no SQLite CLI,
 no database process, no browser extension (constitution C6, requirement N4).
 
-## 1. Build the archives
+## 1. Get the archives
+
+Released versions are built and published automatically. Pushing a version tag
+runs `.github/workflows/release.yml`, which re-runs the full gate against the
+tagged commit, cross-compiles every target, verifies the binary reports the
+expected version, and publishes the release with checksums. Download from the
+repository's Releases page.
+
+Authentication uses the `GITHUB_TOKEN` that Actions mints per run. No personal
+access token is required, and none should be stored in the repository or its
+secrets: a workflow-scoped token expires when the run ends, which a PAT does
+not.
+
+To cut a release:
+
+```bash
+git tag -a v0.1.0-alpha.4 -m "release notes go here; the workflow uses them"
+git push origin v0.1.0-alpha.4
+```
+
+A tag that is not a bare `x.y.z` is published as a pre-release.
+
+To build the artifacts for a tag without publishing anything, run the Release
+workflow manually from the Actions tab and give it the tag name; it uploads the
+archives as run artifacts and stops before creating a release.
+
+### Building locally instead
 
 ```bash
 make package

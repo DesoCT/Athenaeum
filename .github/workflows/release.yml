@@ -1,0 +1,129 @@
+# Builds and publishes a release when a version tag is pushed.
+#
+# Authentication uses the GITHUB_TOKEN that Actions mints for each run, scoped
+# by the permissions block below. No personal access token is needed, and none
+# should ever be stored in this repository: a workflow-scoped token expires
+# when the run ends, which a PAT does not.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Allows a dry run against a tag without publishing anything.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build (artifacts only, no release)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CGO_ENABLED: "0"
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          # Tag annotations are the release notes, and a shallow clone omits them.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: cd web && npm ci
+
+      # A broken build must never become a downloadable release, so the same
+      # gates CI enforces run again here against the tagged commit.
+      - name: Lint
+        run: make lint
+
+      - name: Frontend type-check and unit tests
+        run: make test-web
+
+      - name: Go tests
+        run: make test-go
+
+      - name: Exclusion check
+        run: ./scripts/check-exclusions.sh
+
+      - name: Acceptance tests
+        run: make test-acceptance
+
+      - name: Determine version
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Strip the leading v so artifacts match the Makefile's naming.
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          # Anything that is not a bare x.y.z is a pre-release.
+          if [[ "${TAG#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # One Linux runner cross-compiles every target because the build sets
+      # CGO_ENABLED=0 (constitution C6, requirement N4).
+      - name: Build release archives
+        run: make package VERSION=${{ steps.version.outputs.version }}
+
+      - name: Checksums
+        run: cd dist && sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS
+
+      - name: Verify the version stamp
+        run: |
+          set -euo pipefail
+          tar -xzOf dist/athenaeum-${{ steps.version.outputs.version }}-linux-amd64.tar.gz \
+            athenaeum-linux-amd64 > /tmp/athenaeum-check
+          chmod +x /tmp/athenaeum-check
+          STAMPED="$(/tmp/athenaeum-check version)"
+          echo "$STAMPED"
+          # Catches a release built with a stale or defaulted VERSION.
+          if [ "$STAMPED" != "athenaeum ${{ steps.version.outputs.version }}" ]; then
+            echo "::error::binary reports '$STAMPED', expected 'athenaeum ${{ steps.version.outputs.version }}'"
+            exit 1
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: athenaeum-${{ steps.version.outputs.version }}
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          retention-days: 14
+
+      # Only a real tag push publishes. workflow_dispatch stops above, so a tag
+      # can be built and inspected without creating a release.
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The tag annotation is the release notes, so they are written once.
+          git tag -l --format='%(contents)' "${{ steps.version.outputs.tag }}" > /tmp/notes.md
+          gh release create "${{ steps.version.outputs.tag }}" \
+            dist/*.tar.gz dist/SHA256SUMS \
+            --title "Athenaeum ${{ steps.version.outputs.tag }}" \
+            --notes-file /tmp/notes.md \
+            --verify-tag \
+            ${{ steps.version.outputs.prerelease == 'true' && '--prerelease' || '' }}
