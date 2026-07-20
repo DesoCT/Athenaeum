@@ -96,19 +96,46 @@
     }
   }
 
-  // Switching documents resets the buffer; re-rendering the same document
-  // must not, or an in-progress edit would be discarded.
+  /**
+   * The server content the buffer was last seeded from.
+   *
+   * Dirtiness is `buffer !== lastServerContent`, not `buffer !== doc.content`.
+   * Once a reload lands, doc.content has already moved on, so comparing
+   * against it would report unsaved changes the user never made.
+   */
+  /* svelte-ignore state_referenced_locally */
+  let lastServerContent = $state(restoredContent ?? doc.content);
+
+  /** seed replaces the buffer with server content and records what it was. */
+  function seed(content: string, version: string, dirtyAfter: boolean): void {
+    buffer = content;
+    lastServerContent = content;
+    baseVersion = version;
+    saveState = dirtyAfter ? { kind: "dirty" } : { kind: "saved" };
+  }
+
+  // Two distinct cases, and conflating them was the bug behind E1.
+  //
+  // A different document is a full reset. The *same* document arriving with new
+  // content is a reload, and the buffer must be re-seeded too — otherwise it
+  // keeps the old text, dirty flips true spuriously, and changedOnDisk stays
+  // permanently true so the reload effect fires forever.
   $effect(() => {
     if (doc.id !== lastLoadedId) {
       lastLoadedId = doc.id;
-      buffer = restoredContent ?? doc.content;
-      baseVersion = doc.version;
-      saveState = restoredContent == null ? { kind: "saved" } : { kind: "dirty" };
+      seed(restoredContent ?? doc.content, doc.version, restoredContent != null);
       mode = "split";
+      return;
+    }
+
+    // Same document, new server content. Adopt it only when there is nothing
+    // of the user's to lose; a dirty buffer goes down the conflict path.
+    if (doc.version !== baseVersion && buffer === lastServerContent) {
+      seed(doc.content, doc.version, false);
     }
   });
 
-  const dirty = $derived(buffer !== doc.content || saveState.kind === "dirty");
+  const dirty = $derived(buffer !== lastServerContent || saveState.kind === "dirty");
 
   /**
    * An external change was reported and the editor has not caught up.
