@@ -55,6 +55,23 @@ telemetry, network activity, or CGO.
   front-matter-sized documents.
 - **Impact:** pure Go, no subprocess, no network.
 
+### modernc.org/sqlite — BSD-3-Clause
+
+- **Reason:** the disposable search projection needs embedded SQLite with FTS5
+  (R7, D-014, spec 02 section 3.5).
+- **Alternatives:** `mattn/go-sqlite3` is the usual choice and is faster, but it
+  requires CGO. That would end single-command cross-compilation and make the
+  macOS and Linux release artifacts depend on a C toolchain per target —
+  directly against constitution C6 and requirement N4.
+- **Verified before adoption**, because the whole phase rests on it: under
+  `CGO_ENABLED=0` this driver provides FTS5 virtual tables, `MATCH` queries,
+  `snippet()` with highlight delimiters, and porter stemming. The release
+  binary remains statically linked with no dynamic dependencies, and the size
+  cost is under 1 MB because the frontend bundle already dominates.
+- **Impact:** pure Go, no subprocess, no network. Slower than the CGO driver
+  under heavy write load, which is acceptable: the index is a cache rebuilt in
+  the background, and correctness never depends on it.
+
 ### golang.org/x/sys — BSD-3-Clause
 
 - **Reason:** transitive dependency of fsnotify. Not imported directly.
