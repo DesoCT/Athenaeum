@@ -93,7 +93,11 @@ func (g *PathGuard) Root() string { return g.root }
 // document ID defined by spec 02 section 3.2: the slash-normalised,
 // case-preserving path relative to the canonical root.
 func (g *PathGuard) DocumentID(absPath string) (string, error) {
-	rel, err := filepath.Rel(g.root, absPath)
+	// The root is canonical, so the input must be too before they are compared.
+	// On macOS /var is a symlink to /private/var, so a path under a temporary
+	// directory and the canonical root disagree textually while naming the same
+	// file — and filepath.Rel would then report a spurious escape.
+	rel, err := filepath.Rel(g.root, canonicalise(absPath))
 	if err != nil {
 		return "", fmt.Errorf("relativise %q against %q: %w", absPath, g.root, err)
 	}
@@ -239,6 +243,22 @@ func (g *PathGuard) ResolveWrite(documentID string) (string, error) {
 	}
 
 	return target, nil
+}
+
+// canonicalise resolves symlinks in a path, falling back gracefully.
+//
+// The path may not exist — a removal event names a file that has just gone —
+// so when the full path cannot be resolved the parent directory is resolved
+// instead, which still yields a canonical prefix.
+func canonicalise(absPath string) string {
+	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
+		return resolved
+	}
+	dir, base := filepath.Split(absPath)
+	if resolvedDir, err := filepath.EvalSymlinks(dir); err == nil {
+		return filepath.Join(resolvedDir, base)
+	}
+	return absPath
 }
 
 // contains reports whether an already-canonical path is inside the root.

@@ -290,3 +290,71 @@ func TestDocumentIDPreservesCase(t *testing.T) {
 		t.Errorf("DocumentID = %q, want MixedCase.md", id)
 	}
 }
+
+// TestDocumentIDAcceptsSymlinkedPrefix is the regression test for a macOS-only
+// CI failure.
+//
+// On macOS /var is a symlink to /private/var, so t.TempDir() returns a path
+// that names the same directory as the canonical root by a different route.
+// DocumentID compared the caller's path against the canonical root without
+// canonicalising it first, and reported a spurious escape for every document.
+// A symlinked prefix reproduces the same condition on any platform.
+func TestDocumentIDAcceptsSymlinkedPrefix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs elevation on Windows")
+	}
+	base := t.TempDir()
+
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "docs", "a.md"), []byte("# A\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// "link" stands in for /var pointing at /private/var.
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	g, err := NewPathGuard(link, false)
+	if err != nil {
+		t.Fatalf("NewPathGuard: %v", err)
+	}
+
+	// A caller hands back a path through the symlinked prefix, which is what
+	// the filesystem walk and the watcher both do on macOS.
+	id, err := g.DocumentID(filepath.Join(link, "docs", "a.md"))
+	if err != nil {
+		t.Fatalf("DocumentID via a symlinked prefix: %v", err)
+	}
+	if id != "docs/a.md" {
+		t.Errorf("DocumentID = %q, want docs/a.md", id)
+	}
+}
+
+// TestDocumentIDHandlesRemovedFile keeps the watcher working: a removal event
+// names a file that no longer exists, so the full path cannot be resolved.
+func TestDocumentIDHandlesRemovedFile(t *testing.T) {
+	g, root, _ := newGuard(t, false)
+
+	id, err := g.DocumentID(filepath.Join(root, "docs", "design", "deleted.md"))
+	if err != nil {
+		t.Fatalf("DocumentID for an absent file: %v", err)
+	}
+	if id != "docs/design/deleted.md" {
+		t.Errorf("DocumentID = %q, want docs/design/deleted.md", id)
+	}
+}
+
+// TestDocumentIDStillRejectsEscape confirms canonicalising the input did not
+// weaken containment.
+func TestDocumentIDStillRejectsEscape(t *testing.T) {
+	g, _, outside := newGuard(t, false)
+
+	if _, err := g.DocumentID(filepath.Join(outside, "secret.md")); err == nil {
+		t.Fatal("a path outside the workspace produced a document ID")
+	}
+}

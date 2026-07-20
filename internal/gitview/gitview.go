@@ -90,6 +90,17 @@ func New(root string, log *slog.Logger) *Adapter {
 
 	// Document IDs are relative to the workspace root, which may be a
 	// subdirectory of the repository.
+	// git reports a canonical toplevel, so the workspace root must be
+	// canonicalised too. On macOS /var is a symlink to /private/var, and
+	// comparing the two forms textually makes every status entry fail to match
+	// its document — which reports the whole workspace as clean.
+	if resolved, resolveErr := filepath.EvalSymlinks(root); resolveErr == nil {
+		root = resolved
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(repoRoot); resolveErr == nil {
+		repoRoot = resolved
+	}
+
 	rel, err := filepath.Rel(repoRoot, root)
 	if err != nil {
 		return a

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -202,5 +203,49 @@ func TestAllowListIsExhaustive(t *testing.T) {
 		if !allowed[name] {
 			t.Errorf("%q is missing from the allow-list", name)
 		}
+	}
+}
+
+// TestSymlinkedWorkspacePrefix is the regression test for a macOS-only CI
+// failure in which every document reported "clean".
+//
+// git rev-parse --show-toplevel returns a canonical path. On macOS /var is a
+// symlink to /private/var, so a workspace under a temporary directory named
+// the same repository by a different route. Relativising one form against the
+// other produced a prefix that no status entry could match, so no document
+// ever appeared modified or untracked. A symlinked prefix reproduces the same
+// condition on any platform.
+func TestSymlinkedWorkspacePrefix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs elevation on Windows")
+	}
+	base := t.TempDir()
+
+	// gitRepo already returns a temporary repository; symlink to it so the
+	// adapter is handed the same directory by a different route.
+	real := gitRepo(t)
+	write(t, real, "docs/tracked.md", "# Tracked\n")
+	commitAll(t, real)
+	write(t, real, "docs/new.md", "# New\n")
+
+	// "link" stands in for /var pointing at /private/var.
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	adapter := New(link, nil)
+	if !adapter.Available() {
+		t.Fatal("Git should be available through a symlinked prefix")
+	}
+	adapter.reload(context.Background())
+
+	got, ok := adapter.State("docs/new.md")
+	if !ok {
+		t.Fatal("State reported Git unavailable through a symlinked prefix")
+	}
+	if got != StateUntracked {
+		t.Fatalf("State via a symlinked prefix = %q, want %q; the whole "+
+			"workspace reports clean when the two path forms disagree", got, StateUntracked)
 	}
 }
