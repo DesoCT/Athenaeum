@@ -10,6 +10,7 @@ import (
 	"path"
 	"strings"
 
+	"athenaeum/internal/assets"
 	"athenaeum/internal/documents"
 	"athenaeum/internal/security"
 	"athenaeum/internal/session"
@@ -39,6 +40,8 @@ type Options struct {
 	Documents *documents.Service
 	// Recovery persists unsaved buffers against an abnormal exit (R13, E3).
 	Recovery *session.RecoveryStore
+	// Assets stores pasted and dropped images (R11).
+	Assets *assets.Service
 }
 
 // Server routes API and frontend requests behind the session and origin
@@ -69,6 +72,7 @@ func (s *Server) routes() {
 	// slashes, for example "docs/design/rendering.md".
 	s.mux.Handle("GET "+APIPrefix+"/documents/{id...}", s.guard(http.HandlerFunc(s.handleDocumentRead)))
 	s.mux.Handle("PUT "+APIPrefix+"/documents/{id...}", s.guard(http.HandlerFunc(s.handleDocumentSave)))
+	s.mux.Handle("POST "+APIPrefix+"/assets", s.guard(http.HandlerFunc(s.handleAssetStore)))
 	s.mux.Handle("GET "+APIPrefix+"/recovery", s.guard(http.HandlerFunc(s.handleRecoveryList)))
 	s.mux.Handle("PUT "+APIPrefix+"/recovery", s.guard(http.HandlerFunc(s.handleRecoveryPut)))
 	s.mux.Handle("DELETE "+APIPrefix+"/recovery/{id...}", s.guard(http.HandlerFunc(s.handleRecoveryDelete)))

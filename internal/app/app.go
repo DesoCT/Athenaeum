@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"athenaeum/internal/assets"
 	"athenaeum/internal/config"
 	"athenaeum/internal/documents"
 	"athenaeum/internal/httpapi"
@@ -78,6 +79,7 @@ func Run(ctx context.Context, opts Options) error {
 		opts.Logger.Warn("workspace", "field", d.Field, "detail", d.Message)
 	}
 	docs := documents.New(ws)
+	assetService := assets.New(ws)
 
 	// Personal state lives outside the workspace (spec 03 section 1). A failure
 	// here degrades crash recovery but must not stop a workspace opening.
@@ -133,6 +135,7 @@ func Run(ctx context.Context, opts Options) error {
 			Workspace:     ws,
 			Documents:     docs,
 			Recovery:      recovery,
+			Assets:        assetService,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

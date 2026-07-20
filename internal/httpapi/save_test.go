@@ -12,6 +12,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"athenaeum/internal/assets"
 	"athenaeum/internal/config"
 	"athenaeum/internal/documents"
 	"athenaeum/internal/security"
@@ -83,6 +84,46 @@ func liveServerWithRecovery(t *testing.T, files map[string]string) (*Server, *se
 	}
 	srv.opts.Recovery = store
 	// Routes captured the options by value when they were built.
+	srv.mux = http.NewServeMux()
+	srv.routes()
+
+	return srv, sessions, dir
+}
+
+// liveServerWithAssets builds a server whose asset directory is writable.
+func liveServerWithAssets(t *testing.T) (*Server, *security.SessionManager, string) {
+	t.Helper()
+	srv, sessions, dir := liveServer(t, map[string]string{"docs/a.md": "# A\n"})
+
+	// liveServer's config only makes docs/** writable; assets need their own
+	// entry, so the workspace is reopened with a wider boundary.
+	configPath := filepath.Join(dir, config.DefaultFileName)
+	body := `
+schema_version = 1
+name = "Fixture"
+include = ["**/*.md"]
+
+[assets]
+directory = "assets"
+
+[security]
+writable = ["docs/**/*.md", "assets/**"]
+`
+	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	ws, err := workspace.Open(cfg)
+	if err != nil {
+		t.Fatalf("workspace.Open: %v", err)
+	}
+
+	srv.opts.Workspace = ws
+	srv.opts.Documents = documents.New(ws)
+	srv.opts.Assets = assets.New(ws)
 	srv.mux = http.NewServeMux()
 	srv.routes()
 

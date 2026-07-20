@@ -14,11 +14,16 @@
     /** Called on every keystroke so the caller can track dirty state. */
     onchange: (value: string) => void;
     onsave: () => void;
+    /**
+     * Handles a pasted or dropped file and returns the Markdown to insert at
+     * the caret, or null if it was not stored (R11).
+     */
+    onfile?: (file: File) => Promise<string | null>;
     /** 1-based line to reveal, set when navigating from the preview. */
     revealLine?: number | null;
   }
 
-  let { value, readOnly, wrap, onchange, onsave, revealLine = null }: Props = $props();
+  let { value, readOnly, wrap, onchange, onsave, onfile, revealLine = null }: Props = $props();
 
   let textarea: HTMLTextAreaElement | null = $state(null);
   let gutter: HTMLElement | null = $state(null);
@@ -56,6 +61,34 @@
       if (!textarea) return;
       textarea.selectionStart = textarea.selectionEnd = selectionStart + text.length;
     });
+  }
+
+  /** filesFrom extracts image files from a paste or drop. */
+  function filesFrom(transfer: DataTransfer | null): File[] {
+    if (!transfer) return [];
+    return Array.from(transfer.files).filter((f) => f.type.startsWith("image/"));
+  }
+
+  async function handleFiles(files: File[]): Promise<void> {
+    if (!onfile || readOnly) return;
+    for (const file of files) {
+      const markdown = await onfile(file);
+      if (markdown) insert(markdown);
+    }
+  }
+
+  function onpaste(event: ClipboardEvent): void {
+    const files = filesFrom(event.clipboardData);
+    if (files.length === 0) return; // Ordinary text paste is left alone.
+    event.preventDefault();
+    void handleFiles(files);
+  }
+
+  function ondrop(event: DragEvent): void {
+    const files = filesFrom(event.dataTransfer);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void handleFiles(files);
   }
 
   function updateCursor(): void {
@@ -98,6 +131,11 @@
     {value}
     {onkeydown}
     {onscroll}
+    {onpaste}
+    {ondrop}
+    ondragover={(e) => {
+      if (onfile && !readOnly && e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    }}
     oninput={(e) => {
       onchange(e.currentTarget.value);
       updateCursor();

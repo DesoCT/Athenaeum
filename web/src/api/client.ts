@@ -149,6 +149,67 @@ export async function discardRecovery(documentId: string): Promise<void> {
   });
 }
 
+export interface AssetResult {
+  asset_id: string;
+  markdown: string;
+  relative_path: string;
+  size: number;
+}
+
+/** AssetCollisionError carries a suggested free name (acceptance I2). */
+export class AssetCollisionError extends ApiError {
+  readonly suggestion: string;
+
+  constructor(body: ApiErrorBody, suggestion: string) {
+    super(409, body);
+    this.name = "AssetCollisionError";
+    this.suggestion = suggestion;
+  }
+}
+
+export interface StoreAssetOptions {
+  documentId: string;
+  fileName: string;
+  /** Raw bytes; encoded to base64 for transport. */
+  bytes: Uint8Array;
+  overwrite?: boolean;
+  preferredName?: string;
+}
+
+export async function storeAsset(options: StoreAssetOptions): Promise<AssetResult> {
+  const response = await fetch(`${API_PREFIX}/assets`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      document_id: options.documentId,
+      file_name: options.fileName,
+      content: toBase64(options.bytes),
+      overwrite: options.overwrite ?? false,
+      preferred_name: options.preferredName ?? "",
+    }),
+  });
+
+  if (response.status === 409) {
+    const body = (await response.json()) as { error: ApiErrorBody; suggestion: string };
+    throw new AssetCollisionError(body.error, body.suggestion);
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, await readError(response));
+  }
+  return (await response.json()) as AssetResult;
+}
+
+/** toBase64 encodes bytes in chunks, so a large image cannot blow the stack. */
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 export async function saveDocument(id: string, options: SaveOptions): Promise<SaveResult> {
   const response = await fetch(`${API_PREFIX}/documents/${encodePath(id)}`, {
     method: "PUT",

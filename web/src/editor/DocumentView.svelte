@@ -3,7 +3,9 @@
     saveDocument,
     recordRecovery,
     discardRecovery,
+    storeAsset,
     ConflictError,
+    AssetCollisionError,
     ApiError,
   } from "../api/client";
   import type { Capabilities, DocumentDetail } from "../api/types";
@@ -177,6 +179,50 @@
     }
   }
 
+  /**
+   * Stores a pasted or dropped image and returns the Markdown to insert (R11).
+   *
+   * A name collision is never resolved silently: the user is asked, and the
+   * server only overwrites when explicitly told to (acceptance I2).
+   */
+  async function handleFile(file: File): Promise<string | null> {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const fileName = file.name || "pasted-image.png";
+
+    try {
+      const result = await storeAsset({ documentId: doc.id, fileName, bytes });
+      return result.markdown;
+    } catch (err) {
+      if (err instanceof AssetCollisionError) {
+        const answer = window.prompt(
+          `${err.message}\n\nEnter a different name, or leave "${err.suggestion}" to use that. ` +
+            `Type OVERWRITE to replace the existing file.`,
+          err.suggestion,
+        );
+        if (answer === null) return null; // Cancelled: nothing is written.
+
+        try {
+          const retry = await storeAsset({
+            documentId: doc.id,
+            fileName,
+            bytes,
+            overwrite: answer.trim().toUpperCase() === "OVERWRITE",
+            preferredName: answer.trim().toUpperCase() === "OVERWRITE" ? undefined : answer.trim(),
+          });
+          return retry.markdown;
+        } catch (retryErr) {
+          assetError =
+            retryErr instanceof ApiError ? retryErr.message : "The image could not be stored.";
+          return null;
+        }
+      }
+      assetError = err instanceof ApiError ? err.message : "The image could not be stored.";
+      return null;
+    }
+  }
+
+  let assetError = $state<string | null>(null);
+
   const stateLabel = $derived.by(() => {
     // read_only covers encoding and size limits; a document outside the write
     // boundary is equally uneditable and must say so (spec 04 section 7).
@@ -244,6 +290,13 @@
     </aside>
   {/if}
 
+  {#if assetError}
+    <aside class="save-failed" role="alert">
+      <p>{assetError}</p>
+      <button type="button" class="dismiss" onclick={() => (assetError = null)}>Dismiss</button>
+    </aside>
+  {/if}
+
   {#if saveState.kind === "failed"}
     <aside class="save-failed" role="alert">
       <p>{saveState.message}</p>
@@ -271,6 +324,7 @@
           {wrap}
           {onchange}
           onsave={() => save()}
+          onfile={handleFile}
           {revealLine}
         />
       </div>
@@ -449,6 +503,18 @@
   .doc-warnings p,
   .save-failed p {
     margin: 0;
+  }
+
+  .dismiss {
+    margin-top: 0.4rem;
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--surface-panel);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
   }
 
   .reassurance {
