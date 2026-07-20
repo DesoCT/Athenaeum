@@ -40,6 +40,13 @@
           class="label"
           title={tab.documentId}
           onclick={() => onselect(tab.documentId)}
+          onauxclick={(e) => {
+            // Middle click closes, matching every editor and browser.
+            if (e.button === 1) {
+              e.preventDefault();
+              onclose(tab.documentId);
+            }
+          }}
           onkeydown={(event) => onkeydown(event, index)}
         >
           {#if tab.dirty}

@@ -98,7 +98,11 @@ test.describe("Editing", () => {
     await expect(page.getByRole("option").first()).toBeVisible();
     await page.keyboard.press("Enter");
 
-    await expect(page.getByRole("status").filter({ hasText: "Read-only" })).toBeVisible();
+    // Anchored: the explanation banner also mentions "read-only", and a bare
+    // substring filter matches both it and the status chip.
+    await expect(
+      page.getByRole("status").filter({ hasText: /^Read-only( \(not writable\))?$/ }),
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: /^Save/ })).toHaveCount(0);
     await expect(page.getByLabel("Markdown source")).toHaveAttribute("readonly", "");
   });

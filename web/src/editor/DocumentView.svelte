@@ -400,7 +400,7 @@
   const stateLabel = $derived.by(() => {
     // read_only covers encoding and size limits; a document outside the write
     // boundary is equally uneditable and must say so (spec 04 section 7).
-    if (!canEdit) return "Read-only";
+    if (!canEdit) return doc.read_only ? "Read-only" : "Read-only (not writable)";
     switch (saveState.kind) {
       case "saving":
         return "Saving…";
@@ -470,11 +470,58 @@
     </div>
   </header>
 
+  {#if !canEdit && !doc.read_only}
+    <aside class="notice" role="status">
+      <p>
+        <code>{doc.id}</code> is outside this workspace's write boundary, so it
+        opens read-only. Add a matching pattern to <code>security.writable</code>
+        in <code>athenaeum.toml</code> to edit it.
+      </p>
+    </aside>
+  {/if}
+
   {#if doc.warnings && doc.warnings.length > 0}
     <aside class="doc-warnings" role="status">
       {#each doc.warnings as warning}<p>{warning}</p>{/each}
     </aside>
   {/if}
+
+  <div class="surface" class:split={mode === "split"}>
+    {#if mode !== "preview"}
+      <div class="editor-pane">
+        <Editor
+          value={buffer}
+          readOnly={!canEdit}
+          {wrap}
+          {onchange}
+          onsave={() => save()}
+          onfile={handleFile}
+          {pendingInsert}
+          {revealLine}
+          {highlightLine}
+          online={(line) => (sourceLine = line)}
+        />
+      </div>
+    {/if}
+
+    {#if mode !== "source"}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="preview-pane" onclick={onHeadingClick}>
+        <Preview
+          document={{ ...doc, content: buffer }}
+          {capabilities}
+          {highlightLine}
+          restoreScroll={pendingScroll}
+          onscrollfraction={(fraction) => {
+            previewScroll = fraction;
+            // The restore has served its purpose once the user scrolls.
+            pendingScroll = null;
+          }}
+        />
+      </div>
+    {/if}
+  </div>
 
   {#if reloadNotice}
     <aside class="notice" role="status">
@@ -515,43 +562,6 @@
       onDismiss={() => (saveState = { kind: "dirty" })}
     />
   {/if}
-
-  <div class="surface" class:split={mode === "split"}>
-    {#if mode !== "preview"}
-      <div class="editor-pane">
-        <Editor
-          value={buffer}
-          readOnly={!canEdit}
-          {wrap}
-          {onchange}
-          onsave={() => save()}
-          onfile={handleFile}
-          {pendingInsert}
-          {revealLine}
-          {highlightLine}
-          online={(line) => (sourceLine = line)}
-        />
-      </div>
-    {/if}
-
-    {#if mode !== "source"}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="preview-pane" onclick={onHeadingClick}>
-        <Preview
-          document={{ ...doc, content: buffer }}
-          {capabilities}
-          {highlightLine}
-          restoreScroll={pendingScroll}
-          onscrollfraction={(fraction) => {
-            previewScroll = fraction;
-            // The restore has served its purpose once the user scrolls.
-            pendingScroll = null;
-          }}
-        />
-      </div>
-    {/if}
-  </div>
 
   <label class="wrap-toggle">
     <input type="checkbox" bind:checked={wrap} />
