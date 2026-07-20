@@ -48,6 +48,14 @@ type Watcher struct {
 	fsw  *fsnotify.Watcher
 	subs *subscribers
 
+	// life guards the shutdown state. It is separate from mu because Close waits
+	// for goroutines that take mu themselves.
+	life      sync.Mutex
+	cancel    context.CancelFunc
+	closed    bool
+	tasks     sync.WaitGroup
+	closeOnce sync.Once
+
 	mu sync.Mutex
 	// pending collects touched paths until the debounce window closes.
 	pending map[string]string
@@ -112,10 +120,70 @@ func (w *Watcher) NoteSelfWrite(documentID, version string) {
 	w.mu.Unlock()
 }
 
-// Run watches until the context is cancelled.
-func (w *Watcher) Run(ctx context.Context) {
+// Start begins watching in the background and returns immediately.
+//
+// The watcher derives its own context from the caller's, so Close can stop it
+// without the caller's context ending. That matters because a workspace switch
+// stops one watcher while the process — and its context — carries on; a watcher
+// bound only to the caller's context would keep an unloaded workspace's
+// directories registered for the life of the process.
+func (w *Watcher) Start(ctx context.Context) {
+	w.life.Lock()
+	defer w.life.Unlock()
+
+	if w.closed || w.cancel != nil {
+		return
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	w.cancel = cancel
+
+	w.tasks.Add(1)
+	go func() {
+		defer w.tasks.Done()
+		w.run(runCtx)
+	}()
+}
+
+// Close stops watching and releases the filesystem handles.
+//
+// It blocks until the watch loop has returned and no debounce timer can still
+// fire, so a caller that has closed a watcher knows no further change will be
+// broadcast. Idempotent and safe to call concurrently.
+func (w *Watcher) Close() error {
+	w.closeOnce.Do(func() {
+		w.life.Lock()
+		w.closed = true
+		cancel := w.cancel
+		w.life.Unlock()
+
+		// Refuse further subscriptions and batches before anything is torn down,
+		// so the registry is shut exactly once and a debounce timer that fires
+		// during teardown finds nothing to deliver to.
+		w.subs.close()
+
+		w.mu.Lock()
+		if w.timer != nil {
+			w.timer.Stop()
+			w.timer = nil
+		}
+		w.mu.Unlock()
+
+		if cancel != nil {
+			cancel()
+			w.tasks.Wait()
+			return
+		}
+		// Never started: release the filesystem handle the constructor opened,
+		// which the watch loop would otherwise have closed on its way out.
+		_ = w.fsw.Close()
+	})
+	return nil
+}
+
+// run watches until the context is cancelled.
+func (w *Watcher) run(ctx context.Context) {
 	defer w.fsw.Close()
-	defer w.subs.closeAll()
+	defer w.subs.close()
 
 	for {
 		select {
@@ -265,6 +333,10 @@ type subscribers struct {
 	mu   sync.Mutex
 	next int
 	subs map[int]chan []Change
+	// closed records that the watcher has shut down. Every operation consults it
+	// under the same mutex, which is what makes a late broadcast impossible
+	// rather than merely unlikely.
+	closed bool
 }
 
 func newSubscribers() *subscribers {
@@ -274,6 +346,15 @@ func newSubscribers() *subscribers {
 func (s *subscribers) add() (<-chan []Change, func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.closed {
+		// A subscriber arriving after shutdown gets a closed channel rather than
+		// one that would never deliver anything: a reader ranging over it stops
+		// immediately instead of blocking forever.
+		ch := make(chan []Change)
+		close(ch)
+		return ch, func() {}
+	}
 
 	id := s.next
 	s.next++
@@ -294,6 +375,12 @@ func (s *subscribers) add() (<-chan []Change, func()) {
 func (s *subscribers) broadcast(batch []Change) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.closed {
+		// The watcher is shutting down: a debounce timer that fires during
+		// teardown must not deliver a batch from a workspace already unloaded.
+		return
+	}
 	for _, ch := range s.subs {
 		select {
 		case ch <- batch:
@@ -305,9 +392,16 @@ func (s *subscribers) broadcast(batch []Change) {
 	}
 }
 
-func (s *subscribers) closeAll() {
+// close ends every subscription and refuses later ones. It is idempotent: both
+// Watcher.Close and the watch loop's own exit call it.
+func (s *subscribers) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.closed {
+		return
+	}
+	s.closed = true
 	for id, ch := range s.subs {
 		delete(s.subs, id)
 		close(ch)

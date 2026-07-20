@@ -46,8 +46,11 @@ func newWatcher(t *testing.T, files map[string]string) (*Watcher, string, contex
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go w.Run(ctx)
-	t.Cleanup(cancel)
+	w.Start(ctx)
+	t.Cleanup(func() {
+		cancel()
+		_ = w.Close()
+	})
 
 	return w, dir, cancel
 }

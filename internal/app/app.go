@@ -216,7 +216,8 @@ func Run(ctx context.Context, opts Options) error {
 	defer stop()
 
 	if changeWatcher != nil {
-		go changeWatcher.Run(ctx)
+		changeWatcher.Start(ctx)
+		defer changeWatcher.Close()
 	}
 	if gitAdapter != nil {
 		go gitAdapter.Run(ctx)

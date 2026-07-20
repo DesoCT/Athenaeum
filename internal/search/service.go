@@ -90,6 +90,22 @@ type Service struct {
 	// a queued wake is as good as many.
 	wake chan struct{}
 
+	// life guards the shutdown state below. It is deliberately not `mu`: Close
+	// waits for goroutines that take `mu` themselves, so holding one lock for
+	// both would deadlock the shutdown it is meant to perform.
+	life sync.Mutex
+	// ctx is the service's own context, derived from the caller's at Start.
+	// Owning a context is what lets a service be stopped without ending the
+	// process, which is what a workspace switch requires.
+	ctx    context.Context
+	cancel context.CancelFunc
+	closed bool
+	// tasks covers every goroutine the service starts, so Close can prove they
+	// have finished before the index is shut.
+	tasks     sync.WaitGroup
+	closeOnce sync.Once
+	closeErr  error
+
 	mu sync.Mutex
 	// pending holds document IDs awaiting indexing. Membership is enough —
 	// whether an entry is an update or a removal is decided at processing time
@@ -145,25 +161,82 @@ func NewService(opts Options) *Service {
 // listener must be accepting requests within two seconds of launch, and no
 // interaction may wait on indexing. Nothing on the startup path opens a
 // document.
+// Start is safe to call once. A second call, or a call after Close, does
+// nothing: a service whose goroutines outlive the cancel function that reaches
+// them is precisely the leak this lifecycle exists to prevent.
 func (s *Service) Start(ctx context.Context) {
-	go s.coordinate(ctx)
+	s.life.Lock()
+	if s.closed || s.cancel != nil {
+		s.life.Unlock()
+		return
+	}
+	// The caller's context still stops the service — it is a parent — but the
+	// service now also holds a cancel of its own, so Close can stop it while the
+	// caller's context lives on.
+	s.ctx, s.cancel = context.WithCancel(ctx)
+	serviceCtx := s.ctx
+	s.life.Unlock()
+
+	s.spawn(func() { s.coordinate(serviceCtx) })
 
 	if s.watch != nil {
-		go s.follow(ctx)
+		s.spawn(func() { s.follow(serviceCtx) })
 	}
 
 	// The initial diff runs in the background too. On a warm cache it is one
 	// SQL query and a map comparison, but a cold cache would otherwise read the
 	// whole corpus before the first request could be served.
-	go s.scan()
+	s.spawn(func() { s.scan(serviceCtx) })
 }
 
-// Close releases the projection.
-func (s *Service) Close() error {
-	if s.index == nil {
-		return nil
+// spawn runs fn as a tracked goroutine, refusing to start work on a closed
+// service.
+//
+// The closed check and the WaitGroup increment share one lock, and Close marks
+// the service closed under that same lock before it waits. That ordering is
+// what makes it impossible for an Add to race a Wait already in progress.
+func (s *Service) spawn(fn func()) {
+	s.life.Lock()
+	defer s.life.Unlock()
+
+	if s.closed {
+		return
 	}
-	return s.index.Close()
+	s.tasks.Add(1)
+	go func() {
+		defer s.tasks.Done()
+		fn()
+	}()
+}
+
+// Close stops background work and releases the projection.
+//
+// The order matters and is the fix for a real defect: cancel, wait, then close
+// the index. Closing the index first would let a goroutine still mid-batch
+// write to a closed database. Not cancelling at all — the original behaviour —
+// left the coordinator and the watcher follower running for the life of the
+// process, which made stopping one workspace to open another impossible.
+//
+// Close is idempotent and safe to call concurrently. It blocks until every
+// goroutine Start launched has returned, so a caller that has closed a service
+// knows nothing of it is still touching the workspace.
+func (s *Service) Close() error {
+	s.closeOnce.Do(func() {
+		s.life.Lock()
+		s.closed = true
+		cancel := s.cancel
+		s.life.Unlock()
+
+		if cancel != nil {
+			cancel()
+		}
+		s.tasks.Wait()
+
+		if s.index != nil {
+			s.closeErr = s.index.Close()
+		}
+	})
+	return s.closeErr
 }
 
 // Status returns the current projection status.
@@ -189,19 +262,33 @@ func (s *Service) Status() Status {
 // has drifted is repaired by re-reading the workspace, which is always safe
 // because the files are the source of truth.
 func (s *Service) Rebuild() {
+	s.life.Lock()
+	if s.closed {
+		s.life.Unlock()
+		return
+	}
+	ctx := s.ctx
+	s.life.Unlock()
+
+	if ctx == nil {
+		// Rebuild before Start has nothing to rebuild against; the initial scan
+		// will cover the corpus anyway.
+		return
+	}
+
 	s.mu.Lock()
 	s.status.State = StateRebuilding
 	s.mu.Unlock()
-	go s.scanAll()
+	s.spawn(func() { s.scanAll(ctx) })
 }
 
 // scan diffs the workspace against the projection and queues what differs.
-func (s *Service) scan() { s.diff(false) }
+func (s *Service) scan(ctx context.Context) { s.diff(ctx, false) }
 
 // scanAll queues every document regardless of the stored fingerprint.
-func (s *Service) scanAll() { s.diff(true) }
+func (s *Service) scanAll(ctx context.Context) { s.diff(ctx, true) }
 
-func (s *Service) diff(force bool) {
+func (s *Service) diff(ctx context.Context, force bool) {
 	if s.index == nil || s.ws == nil {
 		return
 	}
@@ -209,7 +296,15 @@ func (s *Service) diff(force bool) {
 
 	stored, err := s.index.Snapshot()
 	if err != nil {
+		if ctx.Err() != nil {
+			// Shutting down: the read failed because the service is stopping,
+			// which is not a projection fault worth reporting.
+			return
+		}
 		s.fail("INDEX_READ_FAILED", err)
+		return
+	}
+	if ctx.Err() != nil {
 		return
 	}
 
@@ -237,6 +332,9 @@ func (s *Service) diff(force bool) {
 	s.log.Debug("search index scan", "documents", len(live), "queued", queued,
 		"duration_ms", time.Since(started).Milliseconds())
 
+	if ctx.Err() != nil {
+		return
+	}
 	if queued == 0 {
 		s.settle(0)
 		return
