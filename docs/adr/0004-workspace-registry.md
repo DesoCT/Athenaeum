@@ -27,6 +27,16 @@ over, so the shape matters more than the feature.
 
 Athenaeum gains a **workspace registry**: a launcher, not a mount table.
 
+The owner's analogy is apt and worth recording: it is a kubeconfig with
+contexts. A file lists named targets, exactly one is active, a picker switches
+between them, and an explicit argument overrides the lot the way
+`kubectl --context` does. `ATHENAEUM_CONFIG` already plays the part of
+`KUBECONFIG`.
+
+The analogy also marks the one deliberate difference. `kubectl config
+use-context` writes back to persist `current-context`; this registry never
+does. See "Why the registry is read-only" below.
+
 1. `<user-config>/athenaeum/workspaces.toml` lists workspaces by name and path.
 2. Athenaeum **only reads** it. The user edits it; the application never
    rewrites it.
@@ -74,9 +84,22 @@ over opaque automation" (C8).
 
 - A new `internal/registry` package: load, validate, resolve `~`, report a
   missing or unreadable entry without failing the others.
-- `athenaeum open` with no argument shows the picker rather than looking for
-  `athenaeum.toml` in the working directory. With an argument it behaves
-  exactly as now, so nothing existing changes.
+- Resolution order for `athenaeum open`, chosen so that **no command that works
+  today behaves differently**:
+
+  1. an explicit path — open it, unchanged;
+  2. no path but `./athenaeum.toml` exists — open it, unchanged;
+  3. no path and no local config — show the picker, where today this is simply
+     an error.
+
+  `--pick` forces the picker regardless of the working directory, which is how
+  one drills out from a shell already inside a workspace. `athenaeum
+  workspaces` lists the registry without opening a browser.
+
+  An earlier draft of this ADR had the picker take precedence over a local
+  `athenaeum.toml`. That would have quietly broken the common flow of running
+  `athenaeum open` from inside a repository, so it was rejected: a convenience
+  feature must not change the meaning of an existing command.
 - The Map Room gains a way back to the picker, and the command bar names the
   active workspace.
 - Registry entries are validated on load: a path that does not exist, or holds
