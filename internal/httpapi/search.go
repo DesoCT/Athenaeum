@@ -15,7 +15,8 @@ import (
 // section 12 permits the operation, its duration, and counts, and nothing else.
 // A search is a record of what the user was looking for in their own notes.
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Search == nil {
+	b := s.current()
+	if b == nil || b.Search == nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, "SEARCH_DISABLED",
 			"Search is not enabled for this workspace.")
 		return
@@ -34,7 +35,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	started := time.Now()
-	response, err := s.opts.Search.Search(search.Request{
+	response, err := b.Search.Search(search.Request{
 		Query: query.Get("q"),
 		Filters: search.Filters{
 			Path:  query.Get("path"),
@@ -83,11 +84,12 @@ func (s *Server) writeSearchError(w http.ResponseWriter, r *http.Request, err er
 
 // handleSearchStatus reports index progress for the status bar (spec 04 section 8).
 func (s *Server) handleSearchStatus(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Search == nil {
+	b := s.current()
+	if b == nil || b.Search == nil {
 		s.writeJSON(w, http.StatusOK, search.Status{State: search.StateDisabled})
 		return
 	}
-	s.writeJSON(w, http.StatusOK, s.opts.Search.Status())
+	s.writeJSON(w, http.StatusOK, b.Search.Status())
 }
 
 // handleSearchRebuild re-examines every document (spec 04 section 4.3).
@@ -95,11 +97,12 @@ func (s *Server) handleSearchStatus(w http.ResponseWriter, r *http.Request) {
 // It returns immediately: rebuilding runs in the background so the UI stays
 // responsive (requirement N2).
 func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Search == nil {
+	b := s.current()
+	if b == nil || b.Search == nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, "SEARCH_DISABLED",
 			"Search is not enabled for this workspace.")
 		return
 	}
-	s.opts.Search.Rebuild()
-	s.writeJSON(w, http.StatusAccepted, s.opts.Search.Status())
+	b.Search.Rebuild()
+	s.writeJSON(w, http.StatusAccepted, b.Search.Status())
 }

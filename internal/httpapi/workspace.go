@@ -64,12 +64,12 @@ func toDiagnosticPayloads(ds config.Diagnostics) []diagnosticPayload {
 }
 
 func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
-	ws := s.opts.Workspace
-	if ws == nil {
-		s.writeError(w, r, http.StatusServiceUnavailable, "WORKSPACE_UNAVAILABLE",
-			"No workspace is open in this process.")
+	b := s.current()
+	if !b.open() {
+		s.noWorkspace(w, r)
 		return
 	}
+	ws := b.Workspace
 	cfg := ws.Config()
 
 	groupCounts := map[string]int{}
@@ -111,29 +111,29 @@ type documentListResponse struct {
 }
 
 func (s *Server) handleDocumentList(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Workspace == nil {
-		s.writeError(w, r, http.StatusServiceUnavailable, "WORKSPACE_UNAVAILABLE",
-			"No workspace is open in this process.")
+	b := s.current()
+	if !b.open() {
+		s.noWorkspace(w, r)
 		return
 	}
-	docs := s.opts.Workspace.Documents()
+	docs := b.Workspace.Documents()
 	// Enumeration knows only file names; titles come from front matter or the
 	// first heading (R2, spec 04 section 4.2).
-	if s.opts.Documents != nil {
-		s.opts.Documents.EnrichTitles(docs)
+	if b.Documents != nil {
+		b.Documents.EnrichTitles(docs)
 	}
 	s.writeJSON(w, http.StatusOK, documentListResponse{Documents: docs})
 }
 
 func (s *Server) handleDocumentRead(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Documents == nil {
-		s.writeError(w, r, http.StatusServiceUnavailable, "WORKSPACE_UNAVAILABLE",
-			"No workspace is open in this process.")
+	b := s.current()
+	if b == nil || b.Documents == nil {
+		s.noWorkspace(w, r)
 		return
 	}
 
 	id := r.PathValue("id")
-	doc, err := s.opts.Documents.Read(id)
+	doc, err := b.Documents.Read(id)
 	if err != nil {
 		s.writeDocumentError(w, r, id, err)
 		return

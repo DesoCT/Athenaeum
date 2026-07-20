@@ -18,7 +18,8 @@ const heartbeatInterval = 25 * time.Second
 // story simpler behind a reverse proxy. Nothing here is load-bearing for
 // correctness; the stream only makes the UI live (spec 02 section 3.4).
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Watcher == nil {
+	b := s.current()
+	if b == nil || b.Watcher == nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, "EVENTS_UNAVAILABLE",
 			"This process is not watching the workspace for changes.")
 		return
@@ -40,7 +41,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	changes, cancel := s.opts.Watcher.Subscribe()
+	// Subscribing to this workspace's watcher and no other. When the workspace
+	// is switched that watcher is closed, the channel closes, and this stream
+	// ends — so a client never receives changes from a workspace it is not
+	// looking at.
+	changes, cancel := b.Watcher.Subscribe()
 	defer cancel()
 
 	heartbeat := time.NewTicker(heartbeatInterval)

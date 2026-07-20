@@ -13,6 +13,7 @@ var boolFlags = map[string]bool{
 	"no-open":   true,
 	"remote":    true,
 	"safe-mode": true,
+	"pick":      true,
 }
 
 // valueFlags consume the following argument unless written as --flag=value.
@@ -21,6 +22,7 @@ var valueFlags = map[string]bool{
 	"port":            true,
 	"log-level":       true,
 	"auth-token-file": true,
+	"registry":        true,
 }
 
 // splitArgs separates positional operands from flag arguments.

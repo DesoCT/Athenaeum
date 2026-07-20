@@ -82,10 +82,11 @@ func liveServerWithRecovery(t *testing.T, files map[string]string) (*Server, *se
 	if err != nil {
 		t.Fatalf("NewRecoveryStore: %v", err)
 	}
-	srv.opts.Recovery = store
-	// Routes captured the options by value when they were built.
-	srv.mux = http.NewServeMux()
-	srv.routes()
+	// Rebinding rather than poking at the options: the binding is what handlers
+	// read, and it is the same path a workspace switch takes.
+	bound := *srv.current()
+	bound.Recovery = store
+	srv.Bind(&bound)
 
 	return srv, sessions, dir
 }
@@ -121,11 +122,12 @@ writable = ["docs/**/*.md", "assets/**"]
 		t.Fatalf("workspace.Open: %v", err)
 	}
 
-	srv.opts.Workspace = ws
-	srv.opts.Documents = documents.New(ws)
-	srv.opts.Assets = assets.New(ws)
-	srv.mux = http.NewServeMux()
-	srv.routes()
+	bound := *srv.current()
+	bound.Workspace = ws
+	bound.Documents = documents.New(ws)
+	bound.Assets = assets.New(ws)
+	bound.Root = cfg.AbsRoot
+	srv.Bind(&bound)
 
 	return srv, sessions, dir
 }

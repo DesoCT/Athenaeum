@@ -41,7 +41,8 @@ type conflictPayload struct {
 }
 
 func (s *Server) handleDocumentSave(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Documents == nil {
+	b := s.current()
+	if b == nil || b.Documents == nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, "WORKSPACE_UNAVAILABLE",
 			"No workspace is open in this process.")
 		return
@@ -75,7 +76,7 @@ func (s *Server) handleDocumentSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.opts.Documents.Write(documents.WriteRequest{
+	result, err := b.Documents.Write(documents.WriteRequest{
 		ID:              id,
 		Content:         req.Content,
 		ExpectedVersion: expected,

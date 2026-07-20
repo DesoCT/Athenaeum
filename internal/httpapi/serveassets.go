@@ -30,7 +30,8 @@ var servableTypes = map[string]string{
 
 // handleAssetServe streams a workspace file for display in the preview.
 func (s *Server) handleAssetServe(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Workspace == nil {
+	b := s.current()
+	if b == nil || b.Workspace == nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, "WORKSPACE_UNAVAILABLE",
 			"No workspace is open in this process.")
 		return
@@ -53,7 +54,7 @@ func (s *Server) handleAssetServe(w http.ResponseWriter, r *http.Request) {
 	// list Markdown only, so requiring inclusion would make every image in the
 	// workspace unloadable. Containment plus the extension allowlist is what
 	// bounds this route.
-	absPath, err := s.opts.Workspace.Guard().ResolveRead(id)
+	absPath, err := b.Workspace.Guard().ResolveRead(id)
 	if err != nil {
 		s.writeDocumentError(w, r, id, err)
 		return

@@ -26,11 +26,12 @@ type recoveryListResponse struct {
 // Listing never consumes a buffer: acceptance E3 requires that restarting
 // offers recovery and neither applies nor discards it.
 func (s *Server) handleRecoveryList(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Recovery == nil {
+	b := s.current()
+	if b == nil || b.Recovery == nil {
 		s.writeJSON(w, http.StatusOK, recoveryListResponse{})
 		return
 	}
-	buffers, err := s.opts.Recovery.List()
+	buffers, err := b.Recovery.List()
 	if err != nil {
 		s.log.Error("list recovery buffers", "error", err)
 		s.writeError(w, r, http.StatusInternalServerError, "RECOVERY_UNAVAILABLE",
@@ -45,7 +46,8 @@ func (s *Server) handleRecoveryList(w http.ResponseWriter, r *http.Request) {
 
 // handleRecoveryPut records an unsaved buffer.
 func (s *Server) handleRecoveryPut(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Recovery == nil {
+	b := s.current()
+	if b == nil || b.Recovery == nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, "RECOVERY_UNAVAILABLE",
 			"Recovery storage is not available in this process.")
 		return
@@ -68,8 +70,8 @@ func (s *Server) handleRecoveryPut(w http.ResponseWriter, r *http.Request) {
 
 	// The buffer must belong to a document this workspace actually includes,
 	// so recovery cannot be used to write arbitrary text into user state.
-	if s.opts.Workspace != nil {
-		if _, ok := s.opts.Workspace.Lookup(req.DocumentID); !ok {
+	if b.Workspace != nil {
+		if _, ok := b.Workspace.Lookup(req.DocumentID); !ok {
 			s.writeErrorWithDetails(w, r, http.StatusNotFound, "PATH_NOT_FOUND",
 				"No such document in this workspace.",
 				map[string]string{"document_id": req.DocumentID})
@@ -77,7 +79,7 @@ func (s *Server) handleRecoveryPut(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.opts.Recovery.Put(session.Buffer{
+	if err := b.Recovery.Put(session.Buffer{
 		DocumentID:  req.DocumentID,
 		Content:     req.Content,
 		BaseVersion: req.BaseVersion,
@@ -94,12 +96,13 @@ func (s *Server) handleRecoveryPut(w http.ResponseWriter, r *http.Request) {
 // handleRecoveryDelete discards a buffer. Only an explicit user action, or a
 // successful save, reaches this route.
 func (s *Server) handleRecoveryDelete(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Recovery == nil {
+	b := s.current()
+	if b == nil || b.Recovery == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	id := r.PathValue("id")
-	if err := s.opts.Recovery.Discard(id); err != nil {
+	if err := b.Recovery.Discard(id); err != nil {
 		s.log.Error("discard recovery buffer", "document_id", id, "error", err)
 		s.writeError(w, r, http.StatusInternalServerError, "RECOVERY_UNAVAILABLE",
 			"The recovery buffer could not be discarded.")

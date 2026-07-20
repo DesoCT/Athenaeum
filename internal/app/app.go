@@ -15,16 +15,13 @@ import (
 	"syscall"
 	"time"
 
-	"athenaeum/internal/assets"
 	"athenaeum/internal/config"
-	"athenaeum/internal/documents"
 	"athenaeum/internal/gitview"
 	"athenaeum/internal/httpapi"
+	"athenaeum/internal/registry"
 	"athenaeum/internal/search"
 	"athenaeum/internal/security"
-	"athenaeum/internal/session"
 	"athenaeum/internal/watcher"
-	"athenaeum/internal/workspace"
 	"athenaeum/web"
 )
 
@@ -36,6 +33,9 @@ const shutdownGrace = 5 * time.Second
 
 // Options are the resolved launch options for a single run.
 type Options struct {
+	// Config is the workspace to open at launch. Nil starts at the picker,
+	// which is where `athenaeum open` lands when it has no path and no local
+	// athenaeum.toml (ADR-0004).
 	Config        *config.Config
 	Bind          string
 	Port          int
@@ -47,10 +47,12 @@ type Options struct {
 	// Stdout receives the launch banner. Tests may substitute a buffer.
 	Stdout *os.File
 
-	// documentCount is filled in after enumeration, for the launch banner.
-	documentCount int
-	// pendingRecovery counts unsaved buffers found at startup.
-	pendingRecovery int
+	// RegistryPath overrides the workspace registry location. Tests set it so
+	// they never read the developer's real configuration (spec 07 section 5).
+	RegistryPath string
+	// SafeMode reapplies --safe-mode to any workspace opened later, so
+	// switching cannot be a way around it.
+	SafeMode bool
 }
 
 // Run starts the server and blocks until the context is cancelled or an
@@ -67,92 +69,25 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	// Runtime checks that depend on launch options, such as raw HTML combined
-	// with remote mode (spec 05 section 6).
-	if diags := opts.Config.ValidateRuntime(opts.Remote); diags.HasErrors() {
-		diags.Write(os.Stderr)
-		return errors.New("the workspace configuration is not safe for this launch mode")
-	}
+	// The process context is the parent of every workspace's. Signals are wired
+	// here rather than later so a workspace opened during startup is already
+	// covered by it.
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	ws, err := workspace.Open(opts.Config)
-	if err != nil {
-		return err
-	}
-	for _, d := range ws.Diagnostics() {
-		opts.Logger.Warn("workspace", "field", d.Field, "detail", d.Message)
-	}
-	docs := documents.New(ws)
-	assetService := assets.New(ws)
-
-	// Personal state lives outside the workspace (spec 03 section 1). A failure
-	// here degrades crash recovery but must not stop a workspace opening.
-	var (
-		recovery     *session.RecoveryStore
-		sessionState *session.StateStore
-		dirs         session.Dirs
-		dirsReady    bool
-	)
-	key := session.NewWorkspaceKey(opts.Config.AbsRoot, "")
-	if resolved, err := session.ResolveDirs(key); err != nil {
-		opts.Logger.Warn("crash recovery unavailable", "error", err)
-	} else {
-		dirs, dirsReady = resolved, true
-		if store, err := session.NewRecoveryStore(dirs); err != nil {
-			opts.Logger.Warn("crash recovery unavailable", "error", err)
+	registryPath := opts.RegistryPath
+	if registryPath == "" {
+		// A failure to locate the user config directory is not fatal: it means
+		// an empty registry, and an explicitly launched workspace still opens.
+		if path, err := registry.DefaultPath(); err == nil {
+			registryPath = path
 		} else {
-			recovery = store
-			if pending := store.Count(); pending > 0 {
-				opts.Logger.Info("unsaved buffers are available to recover", "count", pending)
-				opts.pendingRecovery = pending
-			}
-		}
-		if store, err := session.NewStateStore(dirs); err != nil {
-			opts.Logger.Warn("session restoration unavailable", "error", err)
-		} else {
-			sessionState = store
+			opts.Logger.Warn("the workspace registry could not be located", "error", err)
 		}
 	}
 
-	// The watcher is advisory: a failure costs live updates, never correctness,
-	// so it must not stop a workspace opening (spec 02 section 3.4).
-	var changeWatcher *watcher.Watcher
-	if w, err := watcher.New(ws, opts.Logger); err != nil {
-		opts.Logger.Warn("live change notifications unavailable", "error", err)
-	} else {
-		changeWatcher = w
-	}
-
-	// Read-only Git context. Absent Git is not an error: the panel and the
-	// search filter simply report themselves unavailable (acceptance J4, C1).
-	gitAdapter := gitview.New(opts.Config.AbsRoot, opts.Logger)
-	if !opts.Config.Git.Enabled {
-		gitAdapter = nil
-	}
-
-	// The disposable FTS projection (R7, D-014). It lives under the OS cache
-	// directory, never inside the workspace, and a failure to open it costs
-	// search alone — every other capability is unaffected (C1, C2).
-	var searchService *search.Service
-	if opts.Config.Search.Enabled && dirsReady {
-		index, err := search.Open(dirs.Cache, search.ProjectionKey(opts.Config))
-		if err != nil {
-			opts.Logger.Warn("search is unavailable", "error", err)
-		} else {
-			searchService = search.NewService(search.Options{
-				Index:     index,
-				Workspace: ws,
-				Documents: docs,
-				Watcher:   changeWatcher,
-				Git:       gitStates(gitAdapter),
-				Logger:    opts.Logger,
-				View: documents.IndexOptions{
-					IncludeCodeBlocks:  opts.Config.Search.IndexCodeBlocks,
-					IncludeFrontMatter: opts.Config.Search.IndexFrontMatter,
-				},
-			})
-			defer searchService.Close()
-		}
-	}
+	control := &controller{opts: opts, registryPath: registryPath, ctx: ctx}
+	defer control.shutdown()
 
 	sessions, err := newSessions(opts)
 	if err != nil {
@@ -179,57 +114,43 @@ func Run(ctx context.Context, opts Options) error {
 		opts.Logger.Warn("no compiled frontend is embedded in this binary; run `make build` for a release executable")
 	}
 
+	// The handler carries no workspace of its own. Everything workspace-scoped
+	// arrives through Bind, which is what lets the open workspace be replaced
+	// without rebuilding the router (ADR-0004).
+	api := httpapi.New(httpapi.Options{
+		Sessions:      sessions,
+		Origins:       security.NewOriginPolicy(origins),
+		Frontend:      assets,
+		FrontendBuilt: built,
+		Version:       opts.Version,
+		Remote:        opts.Remote,
+		Logger:        opts.Logger,
+		Workspaces:    control,
+	})
+	control.server = api
+
+	// A workspace named on the command line opens before the listener accepts,
+	// so a launch that cannot open it fails loudly instead of silently landing
+	// at the picker.
+	if opts.Config != nil {
+		if err := control.switchTo(opts.Config); err != nil {
+			return err
+		}
+	}
+
 	srv := &http.Server{
-		Handler: httpapi.New(httpapi.Options{
-			Sessions:          sessions,
-			Origins:           security.NewOriginPolicy(origins),
-			Frontend:          assets,
-			FrontendBuilt:     built,
-			Version:           opts.Version,
-			WorkspaceName:     opts.Config.Name,
-			AllowRemoteAssets: opts.Config.Assets.AllowRemote,
-			Remote:            opts.Remote,
-			Logger:            opts.Logger,
-			Workspace:         ws,
-			Documents:         docs,
-			Recovery:          recovery,
-			Assets:            assetService,
-			Watcher:           changeWatcher,
-			Search:            searchService,
-			SessionState:      sessionState,
-		}),
+		Handler:           api,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	launchURL := origin + httpapi.BootstrapPath + "?t=" + sessions.BootstrapToken()
-	opts.documentCount = ws.Count()
-	printBanner(opts, origin, launchURL)
+	printBanner(opts, control.active(), origin, launchURL)
 
 	if opts.OpenBrowser {
 		// A failure to launch a browser is not fatal: the URL is on stdout.
 		if err := openBrowser(launchURL); err != nil {
 			opts.Logger.Warn("could not open a browser automatically", "error", err)
 		}
-	}
-
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	if changeWatcher != nil {
-		changeWatcher.Start(ctx)
-		defer changeWatcher.Close()
-	}
-	if gitAdapter != nil {
-		go gitAdapter.Run(ctx)
-		if changeWatcher != nil {
-			go followWorkspace(ctx, changeWatcher, gitAdapter)
-		}
-	}
-	// Indexing starts after the listener is open and never blocks it: the
-	// server must be ready within two seconds regardless of corpus size
-	// (requirements N1 and N2).
-	if searchService != nil {
-		searchService.Start(ctx)
 	}
 
 	errCh := make(chan error, 1)
@@ -358,13 +279,19 @@ func originFor(host string, port int) string {
 	return fmt.Sprintf("http://%s:%d", host, port)
 }
 
-func printBanner(opts Options, origin, launchURL string) {
+func printBanner(opts Options, active *loaded, origin, launchURL string) {
 	fmt.Fprintf(opts.Stdout, "Athenaeum %s\n", opts.Version)
-	fmt.Fprintf(opts.Stdout, "  workspace  %s\n", opts.Config.Name)
-	fmt.Fprintf(opts.Stdout, "  root       %s\n", opts.Config.AbsRoot)
-	fmt.Fprintf(opts.Stdout, "  documents  %d\n", opts.documentCount)
-	if opts.pendingRecovery > 0 {
-		fmt.Fprintf(opts.Stdout, "  recovery   %d unsaved buffer(s) awaiting your decision\n", opts.pendingRecovery)
+	if active == nil {
+		// No workspace opened: say so, and say what happens next, rather than
+		// printing an empty name and an empty root.
+		fmt.Fprintf(opts.Stdout, "  workspace  none — choose one from the picker\n")
+	} else {
+		fmt.Fprintf(opts.Stdout, "  workspace  %s\n", active.bound.Name)
+		fmt.Fprintf(opts.Stdout, "  root       %s\n", active.bound.Root)
+		fmt.Fprintf(opts.Stdout, "  documents  %d\n", active.documentCount)
+		if active.pendingRecovery > 0 {
+			fmt.Fprintf(opts.Stdout, "  recovery   %d unsaved buffer(s) awaiting your decision\n", active.pendingRecovery)
+		}
 	}
 	fmt.Fprintf(opts.Stdout, "  listening  %s\n", origin)
 	if opts.Remote {

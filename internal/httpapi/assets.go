@@ -32,7 +32,8 @@ type assetConflictResponse struct {
 }
 
 func (s *Server) handleAssetStore(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Assets == nil {
+	b := s.current()
+	if b == nil || b.Assets == nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, "WORKSPACE_UNAVAILABLE",
 			"No workspace is open in this process.")
 		return
@@ -55,8 +56,8 @@ func (s *Server) handleAssetStore(w http.ResponseWriter, r *http.Request) {
 
 	// The document must be one this workspace includes, so an asset cannot be
 	// anchored to an arbitrary path.
-	if s.opts.Workspace != nil {
-		if _, ok := s.opts.Workspace.Lookup(req.DocumentID); !ok {
+	if b.Workspace != nil {
+		if _, ok := b.Workspace.Lookup(req.DocumentID); !ok {
 			s.writeErrorWithDetails(w, r, http.StatusNotFound, "PATH_NOT_FOUND",
 				"No such document in this workspace.",
 				map[string]string{"document_id": req.DocumentID})
@@ -71,7 +72,7 @@ func (s *Server) handleAssetStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.opts.Assets.Store(assets.Request{
+	result, err := b.Assets.Store(assets.Request{
 		DocumentID:    req.DocumentID,
 		FileName:      req.FileName,
 		Content:       content,

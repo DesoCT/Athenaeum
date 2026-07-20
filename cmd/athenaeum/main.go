@@ -2,14 +2,16 @@
 //
 // Commands (spec 05 section 4):
 //
-//	athenaeum open     [path-to-athenaeum.toml]   start and open a browser
-//	athenaeum serve    [path-to-athenaeum.toml]   start without opening a browser
-//	athenaeum validate [path-to-athenaeum.toml]   check configuration and exit
-//	athenaeum version                             print the build version
+//	athenaeum open       [path-to-athenaeum.toml]   start and open a browser
+//	athenaeum serve      [path-to-athenaeum.toml]   start without opening a browser
+//	athenaeum validate   [path-to-athenaeum.toml]   check configuration and exit
+//	athenaeum workspaces                            list the workspace registry
+//	athenaeum version                               print the build version
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -18,6 +20,7 @@ import (
 
 	"athenaeum/internal/app"
 	"athenaeum/internal/config"
+	"athenaeum/internal/registry"
 	"athenaeum/internal/workspace"
 )
 
@@ -53,6 +56,8 @@ func run(args []string) error {
 		return runServer(rest, false)
 	case "validate":
 		return runValidate(rest)
+	case "workspaces":
+		return runWorkspaces(rest)
 	default:
 		usage(os.Stderr)
 		return fmt.Errorf("unknown command %q", command)
@@ -69,6 +74,12 @@ type flags struct {
 	logLevel      string
 	safeMode      bool
 	configPath    string
+	pick          bool
+	registryPath  string
+	// explicitPath records that the workspace was named, rather than inferred
+	// from the working directory. Only an explicit path is allowed to make a
+	// missing configuration a hard error.
+	explicitPath bool
 }
 
 func parseFlags(command string, args []string, defaultOpen bool) (*flags, error) {
@@ -87,6 +98,8 @@ func parseFlags(command string, args []string, defaultOpen bool) (*flags, error)
 	fs.StringVar(&f.authTokenFile, "auth-token-file", os.Getenv("ATHENAEUM_AUTH_TOKEN_FILE"), "file holding the remote-mode token")
 	fs.BoolVar(&f.remote, "remote", false, "serve beyond loopback (requires --bind and --auth-token-file)")
 	fs.BoolVar(&f.safeMode, "safe-mode", false, "disable Git, remote assets, raw HTML, Mermaid, and user overrides")
+	fs.BoolVar(&f.pick, "pick", false, "start at the workspace picker, ignoring any athenaeum.toml here")
+	fs.StringVar(&f.registryPath, "registry", os.Getenv("ATHENAEUM_REGISTRY"), "workspace registry file (default <user-config>/athenaeum/workspaces.toml)")
 
 	defaultPort, err := strconv.Atoi(envOr("ATHENAEUM_PORT", "7777"))
 	if err != nil {
@@ -101,6 +114,7 @@ func parseFlags(command string, args []string, defaultOpen bool) (*flags, error)
 		return nil, fmt.Errorf("expected at most one workspace path, got %d: %v", len(positional), positional)
 	}
 	f.configPath = firstArg(positional, os.Getenv("ATHENAEUM_CONFIG"))
+	f.explicitPath = f.configPath != ""
 
 	if os.Getenv("ATHENAEUM_NO_OPEN") != "" {
 		f.noOpen = true
@@ -126,19 +140,21 @@ func runServer(args []string, defaultOpen bool) error {
 		return err
 	}
 
-	cfg, err := config.Load(f.configPath)
+	cfg, err := resolveWorkspace(f)
 	if err != nil {
 		return err
 	}
-	if diags := cfg.Validate(); diags.HasErrors() {
-		diags.Write(os.Stderr)
-		errCount, _ := diags.Counts()
-		return fmt.Errorf("%s is not valid: %d error(s); run `athenaeum validate` for detail",
-			cfg.SourcePath, errCount)
-	}
-	if f.safeMode {
-		cfg.ApplySafeMode()
-		logger.Info("safe mode active: Git, remote assets, raw HTML, and Mermaid are disabled")
+	if cfg != nil {
+		if diags := cfg.Validate(); diags.HasErrors() {
+			diags.Write(os.Stderr)
+			errCount, _ := diags.Counts()
+			return fmt.Errorf("%s is not valid: %d error(s); run `athenaeum validate` for detail",
+				cfg.SourcePath, errCount)
+		}
+		if f.safeMode {
+			cfg.ApplySafeMode()
+			logger.Info("safe mode active: Git, remote assets, raw HTML, and Mermaid are disabled")
+		}
 	}
 
 	return app.Run(context.Background(), app.Options{
@@ -150,7 +166,110 @@ func runServer(args []string, defaultOpen bool) error {
 		OpenBrowser:   !f.noOpen,
 		Version:       version,
 		Logger:        logger,
+		RegistryPath:  f.registryPath,
+		SafeMode:      f.safeMode,
 	})
+}
+
+// resolveWorkspace decides which workspace a launch opens (ADR-0004).
+//
+// The order is chosen so that no command that worked before behaves
+// differently:
+//
+//  1. an explicit path, including ATHENAEUM_CONFIG — open it, and fail loudly
+//     if it cannot be opened, exactly as before;
+//  2. no path but ./athenaeum.toml exists — open it, exactly as before;
+//  3. no path and no local configuration — start at the picker, where this was
+//     previously nothing but an error.
+//
+// --pick forces the picker regardless of the working directory, which is how
+// one drills out from a shell already inside a workspace. An earlier draft of
+// ADR-0004 had the picker win over a local athenaeum.toml; that was rejected
+// because it would quietly change what `athenaeum open` means inside a
+// repository.
+//
+// A nil config means "start at the picker" and is not an error.
+func resolveWorkspace(f *flags) (*config.Config, error) {
+	if f.pick {
+		if f.explicitPath {
+			return nil, fmt.Errorf("--pick starts at the workspace picker, so it cannot be combined with the workspace path %q", f.configPath)
+		}
+		return nil, nil
+	}
+
+	if f.explicitPath {
+		return config.Load(f.configPath)
+	}
+
+	if _, err := os.Stat(config.DefaultFileName); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", config.DefaultFileName, err)
+	}
+	return config.Load(config.DefaultFileName)
+}
+
+// runWorkspaces lists the registry without opening a browser (ADR-0004).
+func runWorkspaces(args []string) error {
+	positional, flagArgs, err := splitArgs(args)
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("workspaces", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	registryPath := fs.String("registry", os.Getenv("ATHENAEUM_REGISTRY"),
+		"workspace registry file (default <user-config>/athenaeum/workspaces.toml)")
+	if err := fs.Parse(flagArgs); err != nil {
+		return err
+	}
+	if len(positional) > 0 {
+		return fmt.Errorf("workspaces takes no arguments, got %v", positional)
+	}
+
+	path := *registryPath
+	if path == "" {
+		path, err = registry.DefaultPath()
+		if err != nil {
+			return err
+		}
+	}
+
+	reg, err := registry.Load(path)
+	if err != nil {
+		return err
+	}
+
+	if !reg.Present {
+		fmt.Printf("no workspace registry at %s\n\n", reg.SourcePath)
+		fmt.Printf("Create it with entries like:\n\n")
+		fmt.Printf("  [[workspace]]\n  name = \"Athenaeum\"\n  path = \"~/dev/athenaeum\"\n")
+		return nil
+	}
+
+	fmt.Printf("registry %s\n\n", reg.SourcePath)
+	if len(reg.Entries) == 0 {
+		fmt.Printf("no workspaces are registered; add a [[workspace]] table with name and path\n")
+	}
+	for _, entry := range reg.Entries {
+		if entry.Available {
+			fmt.Printf("  %-24s %s\n", entry.Name, entry.Path)
+			continue
+		}
+		// An unavailable entry is shown with its reason rather than omitted, so
+		// a mistyped path is visible and fixable (ADR-0004, R1).
+		fmt.Printf("  %-24s %s\n", entry.Name, entry.RawPath)
+		fmt.Printf("  %-24s   unavailable: %s (%s)\n", "", entry.Reason, entry.Code)
+		if entry.Remedy != "" {
+			fmt.Printf("  %-24s   remedy: %s\n", "", entry.Remedy)
+		}
+	}
+
+	if len(reg.Diagnostics) > 0 {
+		fmt.Fprintln(os.Stderr)
+		reg.Diagnostics.Write(os.Stderr)
+	}
+	return nil
 }
 
 func runValidate(args []string) error {
@@ -236,13 +355,19 @@ func usage(w *os.File) {
 	fmt.Fprint(w, `Athenaeum — a local-first command centre for Markdown workspaces.
 
 Usage:
-  athenaeum open     [path-to-athenaeum.toml]   start and open a browser
-  athenaeum serve    [path-to-athenaeum.toml]   start without opening a browser
-  athenaeum validate [path-to-athenaeum.toml]   check configuration and exit
-  athenaeum version                             print the build version
+  athenaeum open       [path-to-athenaeum.toml]   start and open a browser
+  athenaeum serve      [path-to-athenaeum.toml]   start without opening a browser
+  athenaeum validate   [path-to-athenaeum.toml]   check configuration and exit
+  athenaeum workspaces                            list the workspace registry
+  athenaeum version                               print the build version
+
+Without a path, open and serve use ./athenaeum.toml when it exists, and
+otherwise start at the workspace picker.
 
 Flags for open and serve:
   --no-open                 do not open a browser
+  --pick                    start at the workspace picker, ignoring ./athenaeum.toml
+  --registry <path>         workspace registry file
   --bind <address>          address to bind (default 127.0.0.1)
   --port <number>           port to bind (default 7777; 0 chooses a free port)
   --remote                  serve beyond loopback; requires --bind and --auth-token-file
@@ -251,7 +376,7 @@ Flags for open and serve:
   --safe-mode               disable Git, remote assets, raw HTML, and Mermaid
 
 Environment:
-  ATHENAEUM_CONFIG, ATHENAEUM_BIND, ATHENAEUM_PORT,
+  ATHENAEUM_CONFIG, ATHENAEUM_BIND, ATHENAEUM_PORT, ATHENAEUM_REGISTRY,
   ATHENAEUM_AUTH_TOKEN_FILE, ATHENAEUM_LOG_LEVEL, ATHENAEUM_NO_OPEN
 `)
 }

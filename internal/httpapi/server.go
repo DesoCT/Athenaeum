@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 
 	"athenaeum/internal/assets"
 	"athenaeum/internal/documents"
@@ -39,8 +40,13 @@ type Options struct {
 	AllowRemoteAssets bool
 	Logger            *slog.Logger
 
-	// Workspace and Documents are nil only in tests that exercise the
-	// transport layer alone.
+	// The fields below describe the workspace open at launch. They seed the
+	// initial binding; after that the server answers from whatever Bind holds,
+	// which is what lets a workspace be swapped without rebuilding the router
+	// (ADR-0004).
+	//
+	// Workspace and Documents are nil only in tests that exercise the transport
+	// layer alone, and in a process that started at the picker.
 	Workspace *workspace.Workspace
 	Documents *documents.Service
 	// Recovery persists unsaved buffers against an abnormal exit (R13, E3).
@@ -55,6 +61,11 @@ type Options struct {
 	Search *search.Service
 	// SessionState persists open tabs and layout (R13).
 	SessionState *session.StateStore
+
+	// Workspaces lists the registry and changes which workspace is open. Nil
+	// disables the picker routes entirely, which is what every existing test
+	// and any embedder that does not want a registry gets.
+	Workspaces Workspaces
 }
 
 // Server routes API and frontend requests behind the session and origin
@@ -63,6 +74,11 @@ type Server struct {
 	opts Options
 	mux  *http.ServeMux
 	log  *slog.Logger
+
+	// mu guards bound. Requests read it; a switch replaces it. An RWMutex
+	// because reads are on every request and writes are a rare user action.
+	mu    sync.RWMutex
+	bound *Bound
 }
 
 // New builds the HTTP handler.
@@ -72,6 +88,7 @@ func New(opts Options) *Server {
 		log = slog.Default()
 	}
 	s := &Server{opts: opts, mux: http.NewServeMux(), log: log}
+	s.bound = boundFromOptions(opts)
 	s.routes()
 	return s
 }
@@ -80,6 +97,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc(BootstrapPath, s.handleBootstrap)
 	s.mux.Handle(APIPrefix+"/health", s.guard(http.HandlerFunc(s.handleHealth)))
 	s.mux.Handle("GET "+APIPrefix+"/workspace", s.guard(http.HandlerFunc(s.handleWorkspace)))
+	// The registry launcher (ADR-0004). Listing is a read; opening and leaving
+	// mutate which workspace is loaded and so sit behind the origin check too.
+	s.mux.Handle("GET "+APIPrefix+"/workspaces", s.guard(http.HandlerFunc(s.handleWorkspaceList)))
+	s.mux.Handle("POST "+APIPrefix+"/workspaces/open", s.guard(http.HandlerFunc(s.handleWorkspaceOpen)))
+	s.mux.Handle("POST "+APIPrefix+"/workspaces/leave", s.guard(http.HandlerFunc(s.handleWorkspaceLeave)))
 	s.mux.Handle("GET "+APIPrefix+"/documents", s.guard(http.HandlerFunc(s.handleDocumentList)))
 	// The id wildcard spans the remaining path because a document ID contains
 	// slashes, for example "docs/design/rendering.md".
@@ -132,7 +154,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // the flag -- the tighter policy applies and nothing off-origin can load.
 func (s *Server) contentSecurityPolicy() string {
 	imgSrc := "'self' data:"
-	if s.opts.AllowRemoteAssets {
+	// The policy follows the open workspace, not the process. After a switch the
+	// new workspace's assets.allow_remote governs; at the picker, where no
+	// workspace is open, the tighter policy applies.
+	allowRemote := false
+	if b := s.current(); b != nil {
+		allowRemote = b.AllowRemoteAssets
+	}
+	if allowRemote {
 		// http: as well as https:, because Markdown in the wild carries both
 		// and silently dropping one is the same class of failure. Remote images
 		// are marked in the DOM and sent with no referrer and no credentials.
@@ -192,10 +221,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if !s.opts.FrontendBuilt {
 		frontend = "missing"
 	}
+	name := ""
+	if b := s.current(); b != nil {
+		name = b.Name
+	}
 	s.writeJSON(w, http.StatusOK, healthResponse{
 		Status:    "ok",
 		Version:   s.opts.Version,
-		Workspace: s.opts.WorkspaceName,
+		Workspace: name,
 		Remote:    s.opts.Remote,
 		Frontend:  frontend,
 	})

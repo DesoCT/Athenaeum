@@ -17,12 +17,13 @@ const maxSessionRequestBytes = 1 << 20
 // filtered out here rather than in the browser, so a stale session cannot be
 // used to learn that an excluded file exists (acceptance B1).
 func (s *Server) handleSessionGet(w http.ResponseWriter, r *http.Request) {
-	if s.opts.SessionState == nil {
+	b := s.current()
+	if b == nil || b.SessionState == nil {
 		s.writeJSON(w, http.StatusOK, session.Default())
 		return
 	}
-	state := s.opts.SessionState.Load()
-	s.writeJSON(w, http.StatusOK, s.filterSession(state))
+	state := b.SessionState.Load()
+	s.writeJSON(w, http.StatusOK, filterSession(b, state))
 }
 
 // handleSessionPut records the UI state.
@@ -30,7 +31,8 @@ func (s *Server) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 // Session state is disposable: a failure to persist it is reported but costs
 // only the layout, never a document (spec 03 section 1).
 func (s *Server) handleSessionPut(w http.ResponseWriter, r *http.Request) {
-	if s.opts.SessionState == nil {
+	b := s.current()
+	if b == nil || b.SessionState == nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, "SESSION_STATE_UNAVAILABLE",
 			"Session state storage is not available in this process.")
 		return
@@ -53,9 +55,9 @@ func (s *Server) handleSessionPut(w http.ResponseWriter, r *http.Request) {
 
 	// Only documents this workspace includes may be recorded, so session state
 	// can never become a place to stash arbitrary paths.
-	state = s.filterSession(state)
+	state = filterSession(b, state)
 
-	if err := s.opts.SessionState.Save(state); err != nil {
+	if err := b.SessionState.Save(state); err != nil {
 		s.log.Warn("store session state", "error_code", "SESSION_STATE_REJECTED")
 		s.writeError(w, r, http.StatusBadRequest, "SESSION_STATE_REJECTED",
 			"The session state could not be stored.")
@@ -65,12 +67,16 @@ func (s *Server) handleSessionPut(w http.ResponseWriter, r *http.Request) {
 }
 
 // filterSession drops references to documents outside the workspace.
-func (s *Server) filterSession(state session.State) session.State {
-	if s.opts.Workspace == nil {
+//
+// It takes the binding rather than reading it again, so the state saved is
+// filtered against exactly the workspace the handler decided to serve, even if
+// a switch lands between the two.
+func filterSession(b *Bound, state session.State) session.State {
+	if b == nil || b.Workspace == nil {
 		return state
 	}
 	return state.Filter(func(id string) bool {
-		_, ok := s.opts.Workspace.Lookup(id)
+		_, ok := b.Workspace.Lookup(id)
 		return ok
 	})
 }
