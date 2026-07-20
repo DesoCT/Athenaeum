@@ -15,6 +15,7 @@ import (
 	"athenaeum/internal/config"
 	"athenaeum/internal/documents"
 	"athenaeum/internal/security"
+	"athenaeum/internal/session"
 	"athenaeum/internal/workspace"
 )
 
@@ -67,6 +68,24 @@ writable = ["docs/**/*.md"]
 		Workspace:     ws,
 		Documents:     documents.New(ws),
 	})
+	return srv, sessions, dir
+}
+
+// liveServerWithRecovery is liveServer plus a recovery store in a temporary
+// state directory, so tests never touch the developer's real state.
+func liveServerWithRecovery(t *testing.T, files map[string]string) (*Server, *security.SessionManager, string) {
+	t.Helper()
+	srv, sessions, dir := liveServer(t, files)
+
+	store, err := session.NewRecoveryStore(session.Dirs{State: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewRecoveryStore: %v", err)
+	}
+	srv.opts.Recovery = store
+	// Routes captured the options by value when they were built.
+	srv.mux = http.NewServeMux()
+	srv.routes()
+
 	return srv, sessions, dir
 }
 

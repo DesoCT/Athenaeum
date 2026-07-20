@@ -1,11 +1,20 @@
 <script lang="ts">
-  import { getWorkspace, listDocuments, getDocument, ApiError } from "./api/client";
+  import {
+    getWorkspace,
+    listDocuments,
+    getDocument,
+    listRecovery,
+    discardRecovery,
+    ApiError,
+    type RecoveryBuffer,
+  } from "./api/client";
   import type { DocumentDetail, DocumentSummary, WorkspaceInfo } from "./api/types";
   import { buildTree } from "./map-room/tree";
   import FileTree from "./map-room/FileTree.svelte";
   import QuickOpen from "./map-room/QuickOpen.svelte";
   import MapRoomHome from "./map-room/MapRoomHome.svelte";
   import DocumentView from "./editor/DocumentView.svelte";
+  import RecoveryPrompt from "./editor/RecoveryPrompt.svelte";
   import Outline from "./components/Outline.svelte";
   import StatusBar from "./components/StatusBar.svelte";
 
@@ -22,6 +31,11 @@
   let activeDoc = $state<DocumentDetail | null>(null);
   let docError = $state<string | null>(null);
   let quickOpenVisible = $state(false);
+
+  // Unsaved buffers found at startup. They are offered, never applied (E3).
+  let recoveryBuffers = $state<RecoveryBuffer[]>([]);
+  let recoveryDismissed = $state(false);
+  let restored = $state<{ id: string; content: string } | null>(null);
   let expanded = $state(new SvelteSet<string>());
 
   // Svelte 5 needs a reactive Set; a plain Set does not trigger updates.
@@ -36,6 +50,13 @@
       workspace = info;
       documents = docs;
       load = { kind: "ready" };
+
+      // Offering recovery must never block the workspace opening.
+      try {
+        recoveryBuffers = await listRecovery();
+      } catch {
+        recoveryBuffers = [];
+      }
       // Expand the first level so the tree is not a wall of closed folders.
       for (const node of buildTree(docs)) {
         if (node.kind === "directory") expanded.add(node.path);
@@ -140,10 +161,27 @@
           <p class="code">{docError}</p>
           <button type="button" onclick={closeDocument}>Back to the Map Room</button>
         </section>
+      {:else if recoveryBuffers.length > 0 && !recoveryDismissed && !activeDoc}
+        <RecoveryPrompt
+          buffers={recoveryBuffers}
+          onRestore={async (buffer) => {
+            restored = { id: buffer.document_id, content: buffer.content };
+            recoveryDismissed = true;
+            await open(buffer.document_id);
+          }}
+          onDiscard={async (buffer) => {
+            await discardRecovery(buffer.document_id);
+            recoveryBuffers = recoveryBuffers.filter(
+              (b) => b.document_id !== buffer.document_id,
+            );
+          }}
+          onDismiss={() => (recoveryDismissed = true)}
+        />
       {:else if activeDoc && workspace}
         <DocumentView
           document={activeDoc}
           capabilities={workspace.capabilities}
+          restoredContent={restored?.id === activeDoc.id ? restored.content : null}
           onreload={async () => {
             if (activeId) activeDoc = await getDocument(activeId);
           }}

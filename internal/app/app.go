@@ -19,6 +19,7 @@ import (
 	"athenaeum/internal/documents"
 	"athenaeum/internal/httpapi"
 	"athenaeum/internal/security"
+	"athenaeum/internal/session"
 	"athenaeum/internal/workspace"
 	"athenaeum/web"
 )
@@ -44,6 +45,8 @@ type Options struct {
 
 	// documentCount is filled in after enumeration, for the launch banner.
 	documentCount int
+	// pendingRecovery counts unsaved buffers found at startup.
+	pendingRecovery int
 }
 
 // Run starts the server and blocks until the context is cancelled or an
@@ -75,6 +78,22 @@ func Run(ctx context.Context, opts Options) error {
 		opts.Logger.Warn("workspace", "field", d.Field, "detail", d.Message)
 	}
 	docs := documents.New(ws)
+
+	// Personal state lives outside the workspace (spec 03 section 1). A failure
+	// here degrades crash recovery but must not stop a workspace opening.
+	var recovery *session.RecoveryStore
+	key := session.NewWorkspaceKey(opts.Config.AbsRoot, "")
+	if dirs, err := session.ResolveDirs(key); err != nil {
+		opts.Logger.Warn("crash recovery unavailable", "error", err)
+	} else if store, err := session.NewRecoveryStore(dirs); err != nil {
+		opts.Logger.Warn("crash recovery unavailable", "error", err)
+	} else {
+		recovery = store
+		if pending := store.Count(); pending > 0 {
+			opts.Logger.Info("unsaved buffers are available to recover", "count", pending)
+			opts.pendingRecovery = pending
+		}
+	}
 
 	sessions, err := newSessions(opts)
 	if err != nil {
@@ -113,6 +132,7 @@ func Run(ctx context.Context, opts Options) error {
 			Logger:        opts.Logger,
 			Workspace:     ws,
 			Documents:     docs,
+			Recovery:      recovery,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -231,6 +251,9 @@ func printBanner(opts Options, origin, launchURL string) {
 	fmt.Fprintf(opts.Stdout, "  workspace  %s\n", opts.Config.Name)
 	fmt.Fprintf(opts.Stdout, "  root       %s\n", opts.Config.AbsRoot)
 	fmt.Fprintf(opts.Stdout, "  documents  %d\n", opts.documentCount)
+	if opts.pendingRecovery > 0 {
+		fmt.Fprintf(opts.Stdout, "  recovery   %d unsaved buffer(s) awaiting your decision\n", opts.pendingRecovery)
+	}
 	fmt.Fprintf(opts.Stdout, "  listening  %s\n", origin)
 	if opts.Remote {
 		// Spec 03 section 11: no automatic browser bootstrap carrying the

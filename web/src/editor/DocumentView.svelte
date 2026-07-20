@@ -1,5 +1,11 @@
 <script lang="ts">
-  import { saveDocument, ConflictError, ApiError } from "../api/client";
+  import {
+    saveDocument,
+    recordRecovery,
+    discardRecovery,
+    ConflictError,
+    ApiError,
+  } from "../api/client";
   import type { Capabilities, DocumentDetail } from "../api/types";
   import Editor from "./Editor.svelte";
   import ConflictView from "./ConflictView.svelte";
@@ -10,9 +16,15 @@
     capabilities: Capabilities;
     /** Re-reads the document from the server after an external change. */
     onreload: () => Promise<void>;
+    /**
+     * Text recovered from an unsaved buffer, seeded once when the user chose
+     * to restore it. Null in every other case, so recovery is never applied
+     * implicitly (acceptance E3).
+     */
+    restoredContent?: string | null;
   }
 
-  let { document: doc, capabilities, onreload }: Props = $props();
+  let { document: doc, capabilities, onreload, restoredContent = null }: Props = $props();
 
   /** View modes (spec 04 section 6). Split is the default. */
   type Mode = "split" | "source" | "preview";
@@ -26,7 +38,7 @@
   // document (after a save, say) must not overwrite what the user has typed.
   // The effect below re-seeds the buffer, but only when the document changes.
   /* svelte-ignore state_referenced_locally */
-  let buffer = $state(doc.content);
+  let buffer = $state(restoredContent ?? doc.content);
   /* svelte-ignore state_referenced_locally */
   let baseVersion = $state(doc.version);
   /* svelte-ignore state_referenced_locally */
@@ -39,17 +51,46 @@
     | { kind: "failed"; message: string }
     | { kind: "conflict"; disk: string; diskVersion: string };
 
-  let saveState = $state<SaveState>({ kind: "saved" });
+  /* svelte-ignore state_referenced_locally */
+  let saveState = $state<SaveState>(
+    restoredContent == null ? { kind: "saved" } : { kind: "dirty" },
+  );
   let revealLine = $state<number | null>(null);
+
+  /**
+   * Unsaved text is mirrored to the recovery store so an abnormal exit cannot
+   * lose it (R13, acceptance E3). It is debounced because this runs on every
+   * keystroke, and it is never applied automatically on the way back: startup
+   * offers the buffer and the user decides.
+   */
+  const RECOVERY_DEBOUNCE_MS = 800;
+  let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function scheduleRecovery(content: string): void {
+    if (recoveryTimer) clearTimeout(recoveryTimer);
+    recoveryTimer = setTimeout(() => {
+      void recordRecovery(doc.id, content, baseVersion).catch(() => {
+        // Recovery is a safety net, not the save path. A failure here must not
+        // interrupt editing; the visible save state remains authoritative.
+      });
+    }, RECOVERY_DEBOUNCE_MS);
+  }
+
+  function cancelRecovery(): void {
+    if (recoveryTimer) {
+      clearTimeout(recoveryTimer);
+      recoveryTimer = null;
+    }
+  }
 
   // Switching documents resets the buffer; re-rendering the same document
   // must not, or an in-progress edit would be discarded.
   $effect(() => {
     if (doc.id !== lastLoadedId) {
       lastLoadedId = doc.id;
-      buffer = doc.content;
+      buffer = restoredContent ?? doc.content;
       baseVersion = doc.version;
-      saveState = { kind: "saved" };
+      saveState = restoredContent == null ? { kind: "saved" } : { kind: "dirty" };
       mode = "split";
     }
   });
@@ -62,6 +103,13 @@
     if (saveState.kind !== "conflict") {
       saveState = next === doc.content ? { kind: "saved" } : { kind: "dirty" };
     }
+    if (next === doc.content) {
+      // Back to the saved text: there is nothing left to recover.
+      cancelRecovery();
+      void discardRecovery(doc.id).catch(() => {});
+      return;
+    }
+    scheduleRecovery(next);
   }
 
   async function save(force = false): Promise<void> {
@@ -77,6 +125,10 @@
       });
       baseVersion = result.version;
       saveState = { kind: "saved" };
+      // The text is on disk, so the recovery copy is no longer needed
+      // (spec 03 section 8 step 9).
+      cancelRecovery();
+      void discardRecovery(doc.id).catch(() => {});
       // Refresh metadata (outline, size) without touching the buffer.
       await onreload();
     } catch (err) {
@@ -105,6 +157,10 @@
     buffer = saveState.disk;
     baseVersion = saveState.diskVersion;
     saveState = { kind: "saved" };
+    // The user explicitly chose the disk version, so their buffer is gone by
+    // their decision, not by ours.
+    cancelRecovery();
+    void discardRecovery(doc.id).catch(() => {});
     await onreload();
   }
 

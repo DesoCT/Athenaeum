@@ -110,6 +110,45 @@ export interface SaveOptions {
   keepBOM?: boolean;
 }
 
+export interface RecoveryBuffer {
+  document_id: string;
+  content: string;
+  base_version: string;
+  updated_at: string;
+}
+
+export async function listRecovery(): Promise<RecoveryBuffer[]> {
+  const body = await request<{ buffers: RecoveryBuffer[] }>("/recovery");
+  return body.buffers ?? [];
+}
+
+/** recordRecovery preserves an unsaved buffer against an abnormal exit (E3). */
+export async function recordRecovery(
+  documentId: string,
+  content: string,
+  baseVersion: string,
+): Promise<void> {
+  await fetch(`${API_PREFIX}/recovery`, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      document_id: documentId,
+      content,
+      base_version: baseVersion,
+    }),
+  });
+}
+
+/** discardRecovery removes a buffer. Only an explicit action calls this. */
+export async function discardRecovery(documentId: string): Promise<void> {
+  const encoded = documentId.split("/").map(encodeURIComponent).join("/");
+  await fetch(`${API_PREFIX}/recovery/${encoded}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+  });
+}
+
 export async function saveDocument(id: string, options: SaveOptions): Promise<SaveResult> {
   const response = await fetch(`${API_PREFIX}/documents/${encodePath(id)}`, {
     method: "PUT",

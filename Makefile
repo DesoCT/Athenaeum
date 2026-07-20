@@ -63,6 +63,7 @@ test-browser: build ## Run browser tests against a running instance (needs ATHEN
 		echo "ATHENAEUM_URL must be the bootstrap URL of a running instance"; exit 1; \
 	fi
 	cd web && $(NPM) run test:browser
+	@echo "note: editing and recovery specs also need ATHENAEUM_SCRATCH"
 
 .PHONY: test-acceptance
 test-acceptance: build ## Run acceptance tests against the release binary
