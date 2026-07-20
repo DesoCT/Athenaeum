@@ -294,3 +294,73 @@ describe("ADR-0003 heading reconciliation", () => {
     expect(headingWarnings).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// R3 — local images
+// ---------------------------------------------------------------------------
+
+describe("R3 local image resolution", () => {
+  function renderIn(documentId: string, source: string) {
+    return render({
+      source,
+      documentId,
+      sourceStartLine: 1,
+      outline: [],
+      capabilities: allEnabled,
+    });
+  }
+
+  it("rewrites a sibling image onto the asset route", () => {
+    const { html } = renderIn("docs/note.md", "![shot](screenshot.png)\n");
+    expect(html).toContain('src="/api/v1/assets/docs/screenshot.png"');
+  });
+
+  it("resolves a path relative to the document directory", () => {
+    const { html } = renderIn("docs/design/note.md", "![x](../assets/a.png)\n");
+    expect(html).toContain('src="/api/v1/assets/docs/assets/a.png"');
+  });
+
+  it("resolves ./ references", () => {
+    const { html } = renderIn("docs/note.md", "![x](./img/a.png)\n");
+    expect(html).toContain('src="/api/v1/assets/docs/img/a.png"');
+  });
+
+  it("treats a root-relative path as workspace-relative", () => {
+    const { html } = renderIn("docs/deep/note.md", "![x](/assets/a.png)\n");
+    expect(html).toContain('src="/api/v1/assets/assets/a.png"');
+  });
+
+  it("handles a document at the workspace root", () => {
+    const { html } = renderIn("README.md", "![x](assets/a.png)\n");
+    expect(html).toContain('src="/api/v1/assets/assets/a.png"');
+  });
+
+  it("leaves remote images alone and keeps their indicator", () => {
+    const { html } = renderIn("docs/note.md", "![x](https://example.com/a.png)\n");
+    expect(html).toContain('src="https://example.com/a.png"');
+    expect(html).toContain('data-remote="true"');
+    expect(html).not.toContain("/api/v1/assets/");
+  });
+
+  it("leaves data URLs alone", () => {
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+    const { html } = renderIn("docs/note.md", `![x](${png})\n`);
+    expect(html).toContain("data:image/png");
+    expect(html).not.toContain("/api/v1/assets/");
+  });
+
+  // A path climbing out of the workspace has nothing to serve, and must not
+  // produce a request the guard would reject anyway.
+  it("marks an escaping path as unresolvable rather than requesting it", () => {
+    const { html } = renderIn("note.md", "![x](../../../etc/passwd.png)\n");
+    expect(html).not.toContain("/api/v1/assets/");
+    expect(html).toContain('data-unresolvable="true"');
+  });
+
+  // CommonMark requires a space in a destination to be escaped or bracketed;
+  // a bare space is not a link at all, which is markdown-it behaving correctly.
+  it("encodes spaces in a bracketed destination", () => {
+    const { html } = renderIn("docs/note.md", "![x](<my image.png>)\n");
+    expect(html).toContain("/api/v1/assets/docs/my%20image.png");
+  });
+});

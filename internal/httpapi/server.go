@@ -77,6 +77,8 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT "+APIPrefix+"/documents/{id...}", s.guard(http.HandlerFunc(s.handleDocumentSave)))
 	s.mux.Handle("GET "+APIPrefix+"/events", s.guard(http.HandlerFunc(s.handleEvents)))
 	s.mux.Handle("POST "+APIPrefix+"/assets", s.guard(http.HandlerFunc(s.handleAssetStore)))
+	// Serves workspace images to the preview (R3, spec 03 section 9).
+	s.mux.Handle("GET "+APIPrefix+"/assets/{id...}", s.guard(http.HandlerFunc(s.handleAssetServe)))
 	s.mux.Handle("GET "+APIPrefix+"/recovery", s.guard(http.HandlerFunc(s.handleRecoveryList)))
 	s.mux.Handle("PUT "+APIPrefix+"/recovery", s.guard(http.HandlerFunc(s.handleRecoveryPut)))
 	s.mux.Handle("DELETE "+APIPrefix+"/recovery/{id...}", s.guard(http.HandlerFunc(s.handleRecoveryDelete)))

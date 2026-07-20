@@ -27,6 +27,11 @@ export interface RenderCapabilities {
 export interface RenderInput {
   /** Markdown source, front matter already removed. */
   source: string;
+  /**
+   * The document being rendered. Relative asset paths are resolved against its
+   * directory, exactly as they would be on disk.
+   */
+  documentId?: string;
   /** 1-based source line at which `source` begins in the original file. */
   sourceStartLine: number;
   /** The backend's authoritative outline (ADR-0003). */
@@ -278,12 +283,95 @@ export function render(input: RenderInput): RenderResult {
     RETURN_TRUSTED_TYPE: false,
   });
 
-  const reconciled = reconcileHeadings(sanitised, input.outline);
+  const withAssets = resolveLocalAssets(sanitised, input.documentId ?? "");
+  const reconciled = reconcileHeadings(withAssets, input.outline);
   return {
     ...reconciled,
     mathSources: env.mathSources ?? [],
     mermaidSources: env.mermaidSources ?? [],
   };
+}
+
+/**
+ * resolveLocalAssets rewrites relative image sources onto the API route that
+ * serves workspace files.
+ *
+ * A bare `![](assets/x.png)` would otherwise resolve against the page origin
+ * and collide with the compiled frontend's own /assets/ directory, so local
+ * images simply would not load. Remote and data URLs are left alone.
+ */
+function resolveLocalAssets(html: string, documentId: string): string {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+
+  const documentDir = documentId.includes("/")
+    ? documentId.slice(0, documentId.lastIndexOf("/"))
+    : "";
+
+  for (const image of Array.from(container.querySelectorAll("img"))) {
+    const src = image.getAttribute("src");
+    if (!src) continue;
+    // Remote assets keep their indicator and their original URL; data URLs are
+    // already self-contained.
+    if (/^(https?:|data:)/i.test(src)) continue;
+
+    // markdown-it percent-encodes the destination already. Decoding once
+    // before resolving stops a second encoding pass turning "%20" into
+    // "%2520", which would 404 for any filename containing a space.
+    const resolved = resolvePath(documentDir, decodeOnce(src));
+    if (resolved === null) {
+      // The path climbs out of the workspace, so there is nothing to serve.
+      image.setAttribute("data-unresolvable", "true");
+      image.removeAttribute("src");
+      image.setAttribute("alt", `${image.getAttribute("alt") ?? ""} (outside the workspace)`.trim());
+      continue;
+    }
+    image.setAttribute("src", assetUrl(resolved));
+    image.setAttribute("data-local-asset", resolved);
+  }
+
+  return container.innerHTML;
+}
+
+/**
+ * decodeOnce percent-decodes a URL path, tolerating a malformed sequence by
+ * returning the input unchanged rather than throwing.
+ */
+function decodeOnce(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/** assetUrl builds the API URL for a workspace-relative asset path. */
+function assetUrl(assetId: string): string {
+  return "/api/v1/assets/" + assetId.split("/").map(encodeURIComponent).join("/");
+}
+
+/**
+ * resolvePath joins a relative reference to a directory, resolving "." and
+ * "..". Returns null when the result escapes the workspace root.
+ */
+function resolvePath(baseDir: string, reference: string): string | null {
+  const target = reference.replace(/^\.\//, "");
+  // A root-relative reference is already workspace-relative.
+  const segments = target.startsWith("/")
+    ? target.slice(1).split("/")
+    : [...(baseDir ? baseDir.split("/") : []), ...target.split("/")];
+
+  const stack: string[] = [];
+  for (const segment of segments) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (stack.length === 0) return null; // Escapes the root.
+      stack.pop();
+      continue;
+    }
+    stack.push(segment);
+  }
+  return stack.length > 0 ? stack.join("/") : null;
 }
 
 /**

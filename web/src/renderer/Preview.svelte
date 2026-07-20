@@ -37,6 +37,7 @@
   const rendered = $derived(
     render({
       source: body.source,
+      documentId: doc.id,
       sourceStartLine: body.startLine,
       outline: doc.outline,
       capabilities,
