@@ -251,3 +251,44 @@ func TestNewFileIsReported(t *testing.T) {
 func fingerprintOf(content []byte) string {
 	return hashBytes(content)
 }
+
+// TestCreateIsNotDowngradedToModified is the regression test for a bug that
+// stopped externally created documents appearing in the tree: creating a file
+// emits Create then Write, and last-write-wins reported only "modified".
+func TestCreateIsNotDowngradedToModified(t *testing.T) {
+	w, dir, _ := newWatcher(t, map[string]string{"a.md": "# One\n"})
+	changes, cancel := w.Subscribe()
+	defer cancel()
+
+	if err := os.WriteFile(filepath.Join(dir, "fresh.md"), []byte("# Fresh\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	batch := await(t, changes, "created file")
+	for _, change := range batch {
+		if change.DocumentID == "fresh.md" {
+			if change.Kind != KindCreated {
+				t.Fatalf("kind = %q, want %q; the tree will not refresh otherwise",
+					change.Kind, KindCreated)
+			}
+			return
+		}
+	}
+	t.Fatalf("fresh.md was not reported: %+v", batch)
+}
+
+func TestMergeKindPrecedence(t *testing.T) {
+	tests := []struct{ existing, incoming, want string }{
+		{"", KindModified, KindModified},
+		{KindCreated, KindModified, KindCreated},
+		{KindModified, KindCreated, KindCreated},
+		{KindCreated, KindRemoved, KindRemoved},
+		{KindRemoved, KindCreated, KindRemoved},
+		{KindModified, KindModified, KindModified},
+	}
+	for _, tc := range tests {
+		if got := mergeKind(tc.existing, tc.incoming); got != tc.want {
+			t.Errorf("mergeKind(%q, %q) = %q, want %q", tc.existing, tc.incoming, got, tc.want)
+		}
+	}
+}

@@ -46,7 +46,9 @@ test.describe("External changes", () => {
       timeout: 10000,
     });
     await expect(page.getByLabel("Markdown source")).toHaveValue("# Note\n\nMy unsaved work.\n");
-    await expect(page.getByRole("status").filter({ hasText: "Changed on disk" })).toBeVisible();
+    await expect(
+      page.getByRole("status").filter({ hasText: /^Changed on disk$/ }),
+    ).toBeVisible();
   });
 
   test("a document created externally appears in the tree", async ({ page }) => {

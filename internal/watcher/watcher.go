@@ -166,13 +166,34 @@ func (w *Watcher) handle(event fsnotify.Event) {
 	}
 
 	w.mu.Lock()
-	w.pending[id] = kind
+	w.pending[id] = mergeKind(w.pending[id], kind)
 	if w.timer == nil {
 		w.timer = time.AfterFunc(debounce, w.flush)
 	} else {
 		w.timer.Reset(debounce)
 	}
 	w.mu.Unlock()
+}
+
+// mergeKind combines two kinds observed for one document inside a single
+// debounce window.
+//
+// Creating a file emits Create immediately followed by Write, so plain
+// last-write-wins reported it as a mere modification and the client never
+// learned the tree had gained a document. Precedence is
+// removed > created > modified: a file created and then deleted in the same
+// window is gone, and a file created and then written is still new.
+func mergeKind(existing, incoming string) string {
+	if existing == "" {
+		return incoming
+	}
+	if existing == KindRemoved || incoming == KindRemoved {
+		return KindRemoved
+	}
+	if existing == KindCreated || incoming == KindCreated {
+		return KindCreated
+	}
+	return KindModified
 }
 
 // flush emits the coalesced batch once the debounce window closes.
