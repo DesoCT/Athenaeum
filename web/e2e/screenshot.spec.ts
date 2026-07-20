@@ -42,6 +42,25 @@ test.describe("Map Room", () => {
     });
 
     await page.goto(BOOTSTRAP!);
+
+    // These checks describe a first launch, and since R13 the Map Room reopens
+    // whatever was last left open. The empty session is stated as a
+    // precondition rather than assumed, so a leftover tab from any earlier run
+    // cannot be mistaken for a rendering fault.
+    await page.evaluate(async () => {
+      await fetch("/api/v1/session", {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          schema_version: 1,
+          tabs: [],
+          recent: [],
+          layout: { navigation: true, context: true, search: false },
+        }),
+      });
+    });
+    await page.reload();
   });
 
   test("home shows the workspace and its groups", async ({ page }) => {

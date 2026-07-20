@@ -1,19 +1,50 @@
 <script lang="ts">
-  import type { DocumentDetail, WorkspaceInfo } from "../api/types";
+  import type { DocumentDetail, IndexStatus, WorkspaceInfo } from "../api/types";
 
   interface Props {
     workspace: WorkspaceInfo | null;
     document: DocumentDetail | null;
     state: "loading" | "ready" | "error";
+    /** Search index status (spec 04 sections 2 and 8). */
+    index?: IndexStatus | null;
   }
 
-  let { workspace, document: doc, state }: Props = $props();
+  let { workspace, document: doc, state, index = null }: Props = $props();
 
   // Status is conveyed by text as well as colour (spec 04 section 15).
   const label = $derived(
     state === "ready" ? "Connected" : state === "loading" ? "Connecting" : "Disconnected",
   );
   const tone = $derived(state === "ready" ? "ok" : state === "loading" ? "pending" : "danger");
+
+  /**
+   * The index label states its condition in words. "Rebuilding" and "stale" are
+   * named explicitly rather than implied by a spinner, so a user always knows
+   * whether search results are complete (spec 04 section 8, constitution C8).
+   */
+  const indexLabel = $derived.by(() => {
+    if (!index) return "Index: checking";
+    switch (index.state) {
+      case "disabled":
+        return "Index: disabled";
+      case "unavailable":
+        return `Index: unavailable (${index.error ?? "unknown"})`;
+      case "building":
+        return `Index: building ${index.indexed}/${index.total}`;
+      case "rebuilding":
+        return `Index: rebuilding (${index.pending} queued, results stale)`;
+      default:
+        return `Index: ready (${index.indexed})`;
+    }
+  });
+
+  const indexTone = $derived.by(() => {
+    if (!index) return "muted";
+    if (index.state === "unavailable") return "danger";
+    if (index.state === "building" || index.state === "rebuilding") return "warn";
+    if (index.state === "disabled") return "muted";
+    return "ok";
+  });
 </script>
 
 <footer class="status-bar">
@@ -34,7 +65,7 @@
   {/if}
 
   <span class="spacer"></span>
-  <span class="field muted">Index: not built (Phase 3)</span>
+  <span class="field {indexTone}" role="status">{indexLabel}</span>
   <span class="field muted">Git: not built (Phase 5)</span>
 </footer>
 
@@ -75,4 +106,8 @@
   .muted {
     color: var(--text-muted);
   }
+
+  .field.ok { color: var(--ok); }
+  .field.warn { color: var(--warn); }
+  .field.danger { color: var(--danger); }
 </style>

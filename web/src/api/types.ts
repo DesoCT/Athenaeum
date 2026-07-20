@@ -100,3 +100,100 @@ export interface ApiErrorBody {
   message: string;
   details?: Record<string, string>;
 }
+
+/**
+ * One run of a search snippet.
+ *
+ * The server splits the snippet into plain and matched runs rather than
+ * returning markup, so highlighting never builds HTML from document text
+ * (spec 03 section 9).
+ */
+export interface SearchSegment {
+  text: string;
+  match?: boolean;
+}
+
+/** Where a search result matched. */
+export type SearchField = "body" | "heading" | "title" | "path";
+
+/** One ranked search result (R7, spec 04 section 8). */
+export interface SearchResult {
+  document_id: string;
+  title: string;
+  groups?: string[];
+  /** The enclosing heading chain, from the backend outline (ADR-0003). */
+  heading_path?: string[];
+  heading_slug?: string;
+  /** 1-based source line, or absent when the match was in the path or title. */
+  line?: number;
+  snippet?: SearchSegment[];
+  field: SearchField;
+}
+
+/** Index states shown in the status bar and the search panel. */
+export type IndexState =
+  | "disabled"
+  | "unavailable"
+  | "building"
+  | "rebuilding"
+  | "ready";
+
+export interface IndexStatus {
+  state: IndexState;
+  indexed: number;
+  total: number;
+  /** Documents queued for indexing. Non-zero means results may be stale. */
+  pending: number;
+  git_filter: boolean;
+  last_built_at?: string;
+  last_duration_ms?: number;
+  /** A stable code, never a message containing document content. */
+  error?: string;
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+  truncated: boolean;
+  status: IndexStatus;
+}
+
+/** Filters a search may apply (R7). */
+export interface SearchFilters {
+  path?: string;
+  group?: string;
+  git?: "modified" | "untracked" | "clean";
+}
+
+/** View modes (spec 04 section 6). */
+export type ViewMode = "split" | "source" | "preview";
+
+/** One restorable open tab (R13). */
+export interface SessionTab {
+  document_id: string;
+  mode: ViewMode;
+  /** 0..1 fraction of the preview's scroll height, so it survives a resize. */
+  preview_scroll: number;
+  source_line: number;
+}
+
+export interface SessionLayout {
+  navigation: boolean;
+  context: boolean;
+  search: boolean;
+}
+
+/**
+ * Restorable UI state (R13).
+ *
+ * Search query history is deliberately absent: R13 permits restoring command
+ * history "that contains no sensitive content", and what someone searched their
+ * own notes for does not qualify.
+ */
+export interface SessionState {
+  schema_version: number;
+  updated_at?: string;
+  tabs: SessionTab[];
+  active_document?: string;
+  recent?: string[];
+  layout: SessionLayout;
+}

@@ -21,9 +21,30 @@
     onfile?: (file: File) => Promise<string | null>;
     /** 1-based line to reveal, set when navigating from the preview. */
     revealLine?: number | null;
+    /**
+     * 1-based line to reveal *and* highlight, set when opening a search result.
+     * The highlight is temporary: it points the eye at the match and then gets
+     * out of the way (spec 04 section 8).
+     */
+    highlightLine?: number | null;
+    /** Reports the caret line so the session can restore it (R13). */
+    online?: (line: number) => void;
   }
 
-  let { value, readOnly, wrap, onchange, onsave, onfile, revealLine = null }: Props = $props();
+  let {
+    value,
+    readOnly,
+    wrap,
+    onchange,
+    onsave,
+    onfile,
+    revealLine = null,
+    highlightLine = null,
+    online,
+  }: Props = $props();
+
+  /** How long a search hit stays highlighted. */
+  const HIGHLIGHT_MS = 2500;
 
   let textarea: HTMLTextAreaElement | null = $state(null);
   let gutter: HTMLElement | null = $state(null);
@@ -97,6 +118,21 @@
     const lines = upto.split("\n");
     cursorLine = lines.length;
     cursorColumn = (lines[lines.length - 1]?.length ?? 0) + 1;
+    online?.(cursorLine);
+  }
+
+  /** offsetOfLine returns the character offset where a 1-based line starts. */
+  function offsetOfLine(lines: string[], line: number): number {
+    const clamped = Math.min(Math.max(line, 1), lines.length);
+    return lines.slice(0, clamped - 1).reduce((sum, l) => sum + l.length + 1, 0);
+  }
+
+  /** scrollToLine puts a line roughly a third of the way down the viewport. */
+  function scrollToLine(line: number, total: number): void {
+    if (!textarea) return;
+    const clamped = Math.min(Math.max(line, 1), total);
+    const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight || "20");
+    textarea.scrollTop = Math.max(0, (clamped - 3) * lineHeight);
   }
 
   /** Keep the gutter aligned with the textarea while scrolling. */
@@ -108,14 +144,39 @@
     if (revealLine == null || !textarea) return;
     // Place the caret at the start of the requested line and scroll to it.
     const lines = value.split("\n");
-    const clamped = Math.min(Math.max(revealLine, 1), lines.length);
-    const offset = lines.slice(0, clamped - 1).reduce((sum, l) => sum + l.length + 1, 0);
+    const offset = offsetOfLine(lines, revealLine);
     textarea.focus();
     textarea.selectionStart = textarea.selectionEnd = offset;
-    // Approximate scroll: line height times line index.
-    const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight || "20");
-    textarea.scrollTop = Math.max(0, (clamped - 3) * lineHeight);
+    scrollToLine(revealLine, lines.length);
     updateCursor();
+  });
+
+  /**
+   * A search hit selects its whole line, which is a real, visible, temporary
+   * highlight the browser already knows how to draw — and one that respects the
+   * user's own selection colours rather than inventing a decoration.
+   */
+  $effect(() => {
+    if (highlightLine == null || !textarea) return;
+    const element = textarea;
+    const lines = value.split("\n");
+    const clamped = Math.min(Math.max(highlightLine, 1), lines.length);
+    const start = offsetOfLine(lines, clamped);
+    const end = start + (lines[clamped - 1]?.length ?? 0);
+
+    element.focus();
+    element.setSelectionRange(start, end);
+    scrollToLine(clamped, lines.length);
+    updateCursor();
+
+    const timer = setTimeout(() => {
+      // Collapse rather than clear: the caret stays where the match was, so the
+      // user can carry on typing there.
+      if (element.selectionStart === start && element.selectionEnd === end) {
+        element.setSelectionRange(start, start);
+      }
+    }, HIGHLIGHT_MS);
+    return () => clearTimeout(timer);
   });
 </script>
 

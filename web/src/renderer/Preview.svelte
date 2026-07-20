@@ -6,9 +6,27 @@
   interface Props {
     document: DocumentDetail;
     capabilities: Capabilities;
+    /**
+     * 1-based source line to reveal and highlight temporarily, set when a
+     * search result is opened (spec 04 section 8).
+     */
+    highlightLine?: number | null;
+    /** 0..1 scroll fraction to restore on open (R13). */
+    restoreScroll?: number | null;
+    /** Reports the scroll fraction so the session can record it (R13). */
+    onscrollfraction?: (fraction: number) => void;
   }
 
-  let { document: doc, capabilities }: Props = $props();
+  let {
+    document: doc,
+    capabilities,
+    highlightLine = null,
+    restoreScroll = null,
+    onscrollfraction,
+  }: Props = $props();
+
+  /** How long a search hit stays highlighted. */
+  const HIGHLIGHT_MS = 2500;
 
   let container: HTMLElement | null = $state(null);
   let headingWarnings = $state<string[]>([]);
@@ -61,6 +79,78 @@
       mermaidSources: result.mermaidSources,
       dark: true,
     });
+  });
+
+  /**
+   * blockFor finds the rendered block covering a source line.
+   *
+   * Only block-level tokens carry `data-line`, so an exact match is the
+   * exception rather than the rule; the enclosing block is the last one that
+   * starts at or before the line.
+   */
+  function blockFor(root: HTMLElement, line: number): HTMLElement | null {
+    let best: HTMLElement | null = null;
+    let bestLine = 0;
+    for (const element of root.querySelectorAll<HTMLElement>("[data-line]")) {
+      const value = Number(element.getAttribute("data-line"));
+      if (!Number.isFinite(value) || value > line) continue;
+      if (value >= bestLine) {
+        best = element;
+        bestLine = value;
+      }
+    }
+    return best;
+  }
+
+  // A search hit is marked and scrolled to, then the mark is removed. The
+  // temporary class rather than an inline style keeps the reduced-motion and
+  // contrast rules in one place (spec 04 section 15).
+  $effect(() => {
+    const root = container;
+    if (!root || highlightLine == null) return;
+
+    const target = blockFor(root, highlightLine);
+    if (!target) return;
+
+    target.classList.add("search-hit");
+    target.scrollIntoView({ block: "center", behavior: "auto" });
+
+    const timer = setTimeout(() => target.classList.remove("search-hit"), HIGHLIGHT_MS);
+    return () => {
+      clearTimeout(timer);
+      target.classList.remove("search-hit");
+    };
+  });
+
+  // Restoring a scroll position waits for layout, or it would apply to a
+  // container that has not yet been given its content height (R13).
+  $effect(() => {
+    const root = container;
+    if (!root || restoreScroll == null || restoreScroll <= 0) return;
+    // Reading `rendered` ties this to the rendered content being in place.
+    void rendered;
+
+    const frame = requestAnimationFrame(() => {
+      const scroller = root.parentElement ?? root;
+      const range = scroller.scrollHeight - scroller.clientHeight;
+      if (range > 0) scroller.scrollTop = range * restoreScroll;
+    });
+    return () => cancelAnimationFrame(frame);
+  });
+
+  // Reporting the scroll fraction rather than a pixel offset means a restored
+  // position survives a different window size.
+  $effect(() => {
+    const root = container;
+    if (!root || !onscrollfraction) return;
+    const scroller = root.parentElement ?? root;
+
+    const report = () => {
+      const range = scroller.scrollHeight - scroller.clientHeight;
+      onscrollfraction(range > 0 ? scroller.scrollTop / range : 0);
+    };
+    scroller.addEventListener("scroll", report, { passive: true });
+    return () => scroller.removeEventListener("scroll", report);
   });
 </script>
 
@@ -271,5 +361,19 @@
   .preview :global(ul.contains-task-list) {
     padding-left: 1.2rem;
     list-style: none;
+  }
+
+  /* A temporarily highlighted search hit (spec 04 section 8). */
+  .preview :global(.search-hit) {
+    background: #ffe9a8;
+    box-shadow: 0 0 0 0.35rem #ffe9a8;
+    border-radius: 2px;
+    transition: background 250ms ease-out, box-shadow 250ms ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .preview :global(.search-hit) {
+      transition: none;
+    }
   }
 </style>

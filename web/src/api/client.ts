@@ -5,6 +5,10 @@ import type {
   DocumentDetail,
   DocumentSummary,
   Health,
+  IndexStatus,
+  SearchFilters,
+  SearchResponse,
+  SessionState,
   WorkspaceInfo,
 } from "./types";
 
@@ -239,6 +243,66 @@ function toBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
   }
   return btoa(binary);
+}
+
+/**
+ * searchWorkspace runs a workspace search (R7).
+ *
+ * A malformed query returns a stable 400 code rather than a fault, so the panel
+ * can explain the problem instead of showing a failure.
+ */
+export function searchWorkspace(
+  query: string,
+  filters: SearchFilters = {},
+  limit = 25,
+  signal?: AbortSignal,
+): Promise<SearchResponse> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  if (filters.path) params.set("path", filters.path);
+  if (filters.group) params.set("group", filters.group);
+  if (filters.git) params.set("git", filters.git);
+  return request<SearchResponse>(`/search?${params.toString()}`, { signal });
+}
+
+export function getIndexStatus(): Promise<IndexStatus> {
+  return request<IndexStatus>("/search/status");
+}
+
+/** rebuildIndex re-examines every document (spec 04 section 4.3). */
+export async function rebuildIndex(): Promise<IndexStatus> {
+  const response = await fetch(`${API_PREFIX}/search/rebuild`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, await readError(response));
+  }
+  return (await response.json()) as IndexStatus;
+}
+
+/** getSession reads the restorable UI state (R13). */
+export function getSession(): Promise<SessionState> {
+  return request<SessionState>("/session");
+}
+
+/**
+ * saveSession records the UI state.
+ *
+ * Session state is disposable, so a failure is swallowed: losing a layout must
+ * never interrupt what the user is doing.
+ */
+export async function saveSession(state: SessionState): Promise<void> {
+  try {
+    await fetch(`${API_PREFIX}/session`, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state),
+    });
+  } catch {
+    // Deliberately ignored; see the note above.
+  }
 }
 
 export async function saveDocument(id: string, options: SaveOptions): Promise<SaveResult> {

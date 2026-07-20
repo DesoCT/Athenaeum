@@ -294,9 +294,14 @@ func (s *Service) coordinate(ctx context.Context) {
 	}
 }
 
+// maxWriteAttempts bounds how long one drain keeps retrying a failing write
+// before it gives up and waits for the next change to try again.
+const maxWriteAttempts = 5
+
 // drain processes everything pending, then reports the projection settled.
 func (s *Service) drain(ctx context.Context) {
 	started := time.Now()
+	failures := 0
 
 	for {
 		batch := s.take(batchDocuments * workerCount)
@@ -307,14 +312,37 @@ func (s *Service) drain(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			s.fail("INDEX_WRITE_FAILED", err)
-			return
+			// A write failure is almost always contention: another Athenaeum
+			// process holding the same cache file, or a slow disk. The work
+			// goes back on the queue and is retried, because the index is a
+			// cache — being late is a far better answer than giving up on it.
+			for _, id := range batch {
+				s.enqueue(id)
+			}
+			failures++
+			if failures >= maxWriteAttempts {
+				// Search stays available on whatever is already indexed. The
+				// documents remain queued, so the next change retries them.
+				s.degrade("INDEX_WRITE_FAILED", err)
+				return
+			}
+			s.backOff(ctx, failures)
+			continue
 		}
+		failures = 0
 		if ctx.Err() != nil {
 			return
 		}
 	}
 	s.settle(time.Since(started))
+}
+
+// backOff waits between write attempts, giving up promptly on shutdown.
+func (s *Service) backOff(ctx context.Context, attempt int) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Duration(attempt) * 250 * time.Millisecond):
+	}
 }
 
 // take removes up to n pending IDs.
@@ -450,10 +478,12 @@ func (s *Service) settle(took time.Duration) {
 	}
 }
 
-// fail records an indexing failure as a stable code.
+// fail marks the projection unusable.
 //
-// The underlying error is logged at debug level only and never carries document
-// text; the status the UI sees is a code (spec 03 section 12, requirement N6).
+// Reserved for failures that make search itself impossible, such as not being
+// able to read the index at all. The underlying error is logged at debug level
+// only and never carries document text; the status the UI sees is a stable code
+// (spec 03 section 12, requirement N6).
 func (s *Service) fail(code string, err error) {
 	s.log.Warn("search index unavailable", "error_code", code)
 	s.log.Debug("search index failure detail", "error", err)
@@ -462,6 +492,24 @@ func (s *Service) fail(code string, err error) {
 	defer s.mu.Unlock()
 	s.status.State = StateUnavailable
 	s.status.Error = code
+}
+
+// degrade records a failure that left the projection usable but incomplete.
+//
+// A write failure is exactly this case: everything already indexed is still
+// searchable and still correct. Declaring search dead because one batch could
+// not be written would throw away working capability over a transient fault,
+// which is the opposite of what a disposable cache should do (C1, C2).
+func (s *Service) degrade(code string, err error) {
+	s.log.Warn("search index is behind", "error_code", code)
+	s.log.Debug("search index failure detail", "error", err)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status.Error = code
+	if s.status.State != StateUnavailable {
+		s.status.State = StateRebuilding
+	}
 }
 
 // Filters narrow a search (R7).

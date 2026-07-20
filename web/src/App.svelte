@@ -6,10 +6,21 @@
     listRecovery,
     discardRecovery,
     subscribeToChanges,
+    getIndexStatus,
+    getSession,
+    saveSession,
     ApiError,
     type RecoveryBuffer,
   } from "./api/client";
-  import type { DocumentDetail, DocumentSummary, WorkspaceInfo } from "./api/types";
+  import type {
+    DocumentDetail,
+    DocumentSummary,
+    IndexStatus,
+    SessionLayout,
+    SessionTab,
+    ViewMode,
+    WorkspaceInfo,
+  } from "./api/types";
   import { buildTree } from "./map-room/tree";
   import FileTree from "./map-room/FileTree.svelte";
   import QuickOpen from "./map-room/QuickOpen.svelte";
@@ -18,6 +29,8 @@
   import RecoveryPrompt from "./editor/RecoveryPrompt.svelte";
   import Outline from "./components/Outline.svelte";
   import StatusBar from "./components/StatusBar.svelte";
+  import TabStrip from "./components/TabStrip.svelte";
+  import SearchPanel from "./search/SearchPanel.svelte";
 
   type Load =
     | { kind: "loading" }
@@ -29,9 +42,81 @@
   let documents = $state<DocumentSummary[]>([]);
 
   let activeId = $state<string | null>(null);
-  let activeDoc = $state<DocumentDetail | null>(null);
   let docError = $state<string | null>(null);
   let quickOpenVisible = $state(false);
+
+  /**
+   * Open tabs (R13).
+   *
+   * A tab's document is fetched when it is first activated, so restoring a
+   * dozen tabs costs one read rather than a dozen. Once loaded, the tab's
+   * DocumentView stays mounted while inactive, which is what preserves an
+   * unsaved buffer across a tab switch.
+   */
+  let openTabs = $state<string[]>([]);
+  let loadedDocs = $state<Record<string, DocumentDetail>>({});
+  let tabView = $state<Record<string, { mode: ViewMode; previewScroll: number; sourceLine: number }>>({});
+  let dirtyDocs = $state<Record<string, boolean>>({});
+  let recent = $state<string[]>([]);
+  let closedTabs = $state<string[]>([]);
+  let layout = $state<SessionLayout>({ navigation: true, context: true, search: false });
+
+  /** Set when a document is opened from a search result (spec 04 section 8). */
+  let highlightLine = $state<number | null>(null);
+  /** Restored view state, applied once when a tab first mounts. */
+  let restoring = $state<Record<string, SessionTab>>({});
+
+  let indexStatus = $state<IndexStatus | null>(null);
+  let sessionReady = $state(false);
+  /**
+   * Whether the user has acted since the page loaded.
+   *
+   * Session restoration is asynchronous; this is what stops a late restore
+   * from overwriting a document the user opened while it was still in flight.
+   */
+  let userActed = $state(false);
+
+  /** Tabs are capped so a session cannot grow without bound. */
+  const MAX_TABS = 12;
+
+  const activeDoc = $derived(activeId ? (loadedDocs[activeId] ?? null) : null);
+
+  /**
+   * Recording a tab's view state must be idempotent.
+   *
+   * DocumentView reports its view state from an effect, and an inline callback
+   * prop is a new closure on every render — so assigning unconditionally makes
+   * report and render feed each other forever. Comparing first turns the second
+   * report into a no-op, which is what ends the cycle.
+   */
+  function recordViewState(
+    id: string,
+    view: { mode: ViewMode; previewScroll: number; sourceLine: number },
+  ): void {
+    const previous = tabView[id];
+    if (
+      previous &&
+      previous.mode === view.mode &&
+      previous.previewScroll === view.previewScroll &&
+      previous.sourceLine === view.sourceLine
+    ) {
+      return;
+    }
+    tabView = { ...tabView, [id]: view };
+  }
+
+  function recordDirty(id: string, dirty: boolean): void {
+    if (dirtyDocs[id] === dirty) return;
+    dirtyDocs = { ...dirtyDocs, [id]: dirty };
+  }
+
+  const tabDescriptors = $derived(
+    openTabs.map((id) => ({
+      documentId: id,
+      title: loadedDocs[id]?.title ?? documents.find((d) => d.id === id)?.title ?? id,
+      dirty: dirtyDocs[id] === true,
+    })),
+  );
 
   // Unsaved buffers found at startup. They are offered, never applied (E3).
   let recoveryBuffers = $state<RecoveryBuffer[]>([]);
@@ -47,6 +132,18 @@
   import { SvelteSet } from "svelte/reactivity";
 
   const tree = $derived(buildTree(documents));
+
+  /**
+   * Unsaved work is always offered when it exists (acceptance E3 is a MUST,
+   * while session restoration is a SHOULD — so a restored tab must not suppress
+   * the offer).
+   *
+   * It is shown as a banner above the document surface rather than instead of
+   * it: displacing the surface would unmount every open tab and take their
+   * unsaved buffers with it, which is precisely the loss the prompt exists to
+   * prevent.
+   */
+  const showRecovery = $derived(recoveryBuffers.length > 0 && !recoveryDismissed);
 
   async function boot(): Promise<void> {
     load = { kind: "loading" };
@@ -66,6 +163,8 @@
       for (const node of buildTree(docs)) {
         if (node.kind === "directory") expanded.add(node.path);
       }
+
+      await restoreSession();
     } catch (err) {
       load =
         err instanceof ApiError
@@ -78,36 +177,215 @@
     }
   }
 
-  async function open(id: string): Promise<void> {
-    activeId = id;
-    docError = null;
+  /**
+   * restoreSession reopens the previous session (R13).
+   *
+   * The server has already dropped any tab naming a document the workspace no
+   * longer includes, so nothing here can resurrect an excluded file.
+   */
+  async function restoreSession(): Promise<void> {
     try {
-      activeDoc = await getDocument(id);
-    } catch (err) {
-      activeDoc = null;
-      docError =
-        err instanceof ApiError ? `${err.code}: ${err.message}` : "The document could not be read.";
+      const state = await getSession();
+
+      // Restoration is asynchronous, and the user can act before it lands —
+      // opening a document during startup is entirely normal. Applying the
+      // stored session unconditionally at that point wipes the tab they just
+      // opened, so what they are doing now wins and the stored session is
+      // simply superseded.
+      const superseded = userActed;
+
+      // Recent documents merge either way: it is a history, not a view.
+      const merged = [...recent, ...(state.recent ?? [])];
+      recent = merged.filter((id, index) => merged.indexOf(id) === index).slice(0, 20);
+
+      if (superseded) return;
+
+      layout = state.layout ?? layout;
+      openTabs = state.tabs.map((tab) => tab.document_id).slice(0, MAX_TABS);
+
+      const byId: Record<string, SessionTab> = {};
+      for (const tab of state.tabs) byId[tab.document_id] = tab;
+      restoring = byId;
+
+      // Only the active document is fetched now; the rest load on activation.
+      if (state.active_document && openTabs.includes(state.active_document)) {
+        await open(state.active_document, undefined, false);
+      }
+    } catch {
+      // A session that cannot be restored costs the layout, never a document.
+    } finally {
+      // Persisting is enabled only after restoration, or the first debounced
+      // save would overwrite the stored session with the empty initial state.
+      sessionReady = true;
     }
   }
 
-  function closeDocument(): void {
-    activeId = null;
-    activeDoc = null;
+  /** open activates a document, adding a tab for it if it has none. */
+  async function open(id: string, line?: number, record = true): Promise<void> {
+    activeId = id;
     docError = null;
+    highlightLine = null;
+
+    if (!openTabs.includes(id)) {
+      openTabs = [...openTabs, id].slice(-MAX_TABS);
+    }
+    if (record) {
+      // record is false only for the restore itself, which is not a user act.
+      userActed = true;
+      recent = [id, ...recent.filter((entry) => entry !== id)].slice(0, 20);
+    }
+
+    if (!loadedDocs[id]) {
+      try {
+        loadedDocs = { ...loadedDocs, [id]: await getDocument(id) };
+      } catch (err) {
+        openTabs = openTabs.filter((entry) => entry !== id);
+        docError =
+          err instanceof ApiError
+            ? `${err.code}: ${err.message}`
+            : "The document could not be read.";
+        return;
+      }
+    }
+
+    if (line != null && line > 0) {
+      // Cleared and re-set so opening the same result twice highlights again.
+      highlightLine = null;
+      queueMicrotask(() => (highlightLine = line));
+    }
+  }
+
+  function closeTab(id: string): void {
+    userActed = true;
+    openTabs = openTabs.filter((entry) => entry !== id);
+    closedTabs = [id, ...closedTabs.filter((entry) => entry !== id)].slice(0, 10);
+
+    // Dropping the loaded document releases its buffer. That is safe only
+    // because closing is an explicit action and the recovery store already
+    // holds anything unsaved (acceptance E3).
+    const { [id]: _dropped, ...rest } = loadedDocs;
+    loadedDocs = rest;
+    delete dirtyDocs[id];
+    delete tabView[id];
+
+    if (activeId === id) {
+      activeId = openTabs[openTabs.length - 1] ?? null;
+      docError = null;
+    }
+  }
+
+  function reopenClosedTab(): void {
+    const id = closedTabs[0];
+    if (!id) return;
+    closedTabs = closedTabs.slice(1);
+    void open(id);
+  }
+
+  function showSearch(): void {
+    userActed = true;
+    layout = { ...layout, search: true, navigation: true };
+  }
+
+  function showTree(): void {
+    userActed = true;
+    layout = { ...layout, search: false };
   }
 
   function onkeydown(event: KeyboardEvent): void {
     const meta = event.metaKey || event.ctrlKey;
-    // Quick open (spec 04 section 14).
-    if (meta && event.key.toLowerCase() === "p" && !event.shiftKey) {
+    if (!meta) return;
+    const key = event.key.toLowerCase();
+
+    // Spec 04 section 14.
+    if (key === "p" && !event.shiftKey) {
       event.preventDefault();
       quickOpenVisible = true;
+      return;
     }
-    if (meta && event.key.toLowerCase() === "w") {
+    if (key === "f" && event.shiftKey) {
       event.preventDefault();
-      closeDocument();
+      showSearch();
+      return;
+    }
+    if (key === "w" && !event.shiftKey) {
+      event.preventDefault();
+      if (activeId) closeTab(activeId);
+      return;
+    }
+    if (key === "t" && event.shiftKey) {
+      event.preventDefault();
+      reopenClosedTab();
     }
   }
+
+  /**
+   * Session state is persisted debounced, and only after restoration, so a
+   * transient empty state never overwrites a real one.
+   */
+  const SESSION_DEBOUNCE_MS = 400;
+  let sessionTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function persistSession(): void {
+    if (sessionTimer) clearTimeout(sessionTimer);
+    sessionTimer = setTimeout(() => {
+      void saveSession({
+        schema_version: 1,
+        tabs: openTabs.map((id) => ({
+          document_id: id,
+          mode: tabView[id]?.mode ?? "split",
+          preview_scroll: tabView[id]?.previewScroll ?? 0,
+          source_line: tabView[id]?.sourceLine ?? 0,
+        })),
+        active_document: activeId ?? undefined,
+        recent,
+        layout,
+      });
+    }, SESSION_DEBOUNCE_MS);
+  }
+
+  $effect(() => {
+    // Referenced so the effect re-runs when any of them changes.
+    void openTabs;
+    void activeId;
+    void recent;
+    void layout;
+    void tabView;
+    if (!sessionReady) return;
+    persistSession();
+  });
+
+  /**
+   * Index status polling.
+   *
+   * Faster while the projection is catching up, so "rebuilding" and "stale"
+   * clear promptly, and slower once it is settled so an idle workspace is not
+   * polled needlessly.
+   */
+  $effect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      // The next interval is chosen from the value just fetched, not from the
+      // reactive store, so this loop never reads state it also writes.
+      let busy = false;
+      try {
+        const status = await getIndexStatus();
+        busy = status.state === "building" || status.state === "rebuilding";
+        if (!stopped) indexStatus = status;
+      } catch {
+        // The status bar keeps its last known value rather than flickering.
+      }
+      if (stopped) return;
+      timer = setTimeout(() => void poll(), busy ? 700 : 5000);
+    };
+
+    void poll();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  });
 
   $effect(() => {
     void boot();
@@ -147,22 +425,52 @@
       <span class="workspace">{workspace?.name ?? "—"}</span>
     </div>
 
-    <button type="button" class="quick-open-trigger" onclick={() => (quickOpenVisible = true)}>
-      Quick open <kbd>⌘P</kbd>
-    </button>
+    <div class="bar-actions">
+      <button type="button" class="quick-open-trigger" onclick={() => (quickOpenVisible = true)}>
+        Quick open <kbd>⌘P</kbd>
+      </button>
+      <button type="button" class="quick-open-trigger" onclick={showSearch}>
+        Search <kbd>⌘⇧F</kbd>
+      </button>
+    </div>
   </header>
 
   <div class="body">
     <nav class="panel navigation" aria-label="Workspace navigation">
-      <h2>Documents</h2>
-      {#if load.kind === "ready"}
+      <div class="nav-switch" role="group" aria-label="Navigation view">
+        <button
+          type="button"
+          class:active={!layout.search}
+          aria-pressed={!layout.search}
+          onclick={showTree}
+        >
+          Documents
+        </button>
+        <button
+          type="button"
+          class:active={layout.search}
+          aria-pressed={layout.search}
+          onclick={showSearch}
+        >
+          Search
+        </button>
+      </div>
+
+      {#if layout.search}
+        <SearchPanel
+          groups={workspace?.groups ?? []}
+          status={indexStatus}
+          onopen={(id, line) => void open(id, line)}
+          onstatuschange={(status) => (indexStatus = status)}
+        />
+      {:else if load.kind === "ready"}
         {#if documents.length === 0}
           <p class="pending">No documents match the configured include patterns.</p>
         {:else}
           <FileTree
             nodes={tree}
             {activeId}
-            onopen={open}
+            onopen={(id) => void open(id)}
             {expanded}
             ontoggle={(path) => {
               if (expanded.has(path)) expanded.delete(path);
@@ -176,6 +484,12 @@
     </nav>
 
     <main class="document-surface" aria-label="Document surface">
+      <TabStrip
+        tabs={tabDescriptors}
+        {activeId}
+        onselect={(id) => void open(id)}
+        onclose={closeTab}
+      />
       {#if load.kind === "error"}
         <section class="card error">
           <h1>Workspace unavailable</h1>
@@ -183,58 +497,90 @@
           <p>{load.message}</p>
           <button type="button" onclick={boot}>Retry</button>
         </section>
-      {:else if docError}
-        <section class="card error">
-          <h1>Document unavailable</h1>
-          <p class="code">{docError}</p>
-          <button type="button" onclick={closeDocument}>Back to the Map Room</button>
-        </section>
-      {:else if recoveryBuffers.length > 0 && !recoveryDismissed && !activeDoc}
-        <RecoveryPrompt
-          buffers={recoveryBuffers}
-          onRestore={async (buffer) => {
-            restored = { id: buffer.document_id, content: buffer.content };
-            recoveryDismissed = true;
-            await open(buffer.document_id);
-          }}
-          onDiscard={async (buffer) => {
-            await discardRecovery(buffer.document_id);
-            recoveryBuffers = recoveryBuffers.filter(
-              (b) => b.document_id !== buffer.document_id,
-            );
-          }}
-          onDismiss={() => (recoveryDismissed = true)}
-        />
-      {:else if activeDoc && workspace}
-        <DocumentView
-          document={activeDoc}
-          capabilities={workspace.capabilities}
-          restoredContent={restored?.id === activeDoc.id ? restored.content : null}
-          diskVersion={diskVersions[activeDoc.id] ?? null}
-          onreload={async () => {
-            if (activeId) activeDoc = await getDocument(activeId);
-          }}
-        />
       {:else if workspace}
-        <MapRoomHome {workspace} {documents} onopen={open} />
+        <!--
+          Transient surfaces are siblings of the tab list, never alternatives to
+          it. Putting them in one mutually exclusive chain destroyed every open
+          DocumentView whenever the active document was momentarily absent —
+          which happens on every tab switch, while the next document loads — and
+          took the unsaved buffers with it.
+        -->
+        {#if docError}
+          <section class="card error">
+            <h1>Document unavailable</h1>
+            <p class="code">{docError}</p>
+            <button type="button" onclick={() => (docError = null)}>Dismiss</button>
+          </section>
+        {/if}
+
+        {#if showRecovery}
+          <RecoveryPrompt
+            buffers={recoveryBuffers}
+            onRestore={async (buffer) => {
+              restored = { id: buffer.document_id, content: buffer.content };
+              recoveryDismissed = true;
+              await open(buffer.document_id);
+            }}
+            onDiscard={async (buffer) => {
+              await discardRecovery(buffer.document_id);
+              recoveryBuffers = recoveryBuffers.filter(
+                (b) => b.document_id !== buffer.document_id,
+              );
+            }}
+            onDismiss={() => (recoveryDismissed = true)}
+          />
+        {/if}
+
+        <!-- Every loaded tab stays mounted; only the active one renders, so an
+             unsaved buffer survives a tab switch. -->
+        {#each openTabs as id (id)}
+          {#if loadedDocs[id]}
+            <DocumentView
+              document={loadedDocs[id]}
+              capabilities={workspace.capabilities}
+              active={id === activeId && !docError}
+              restoredContent={restored?.id === id ? restored.content : null}
+              diskVersion={diskVersions[id] ?? null}
+              highlightLine={id === activeId ? highlightLine : null}
+              restoreMode={restoring[id]?.mode ?? null}
+              restoreScroll={restoring[id]?.preview_scroll ?? null}
+              restoreLine={restoring[id]?.source_line ?? null}
+              onviewstate={(view) => recordViewState(id, view)}
+              ondirty={(dirty) => recordDirty(id, dirty)}
+              onreload={async () => {
+                loadedDocs = { ...loadedDocs, [id]: await getDocument(id) };
+              }}
+            />
+          {/if}
+        {/each}
+
+        {#if openTabs.length === 0 && !docError}
+          <MapRoomHome {workspace} {documents} {recent} onopen={(id) => void open(id)} />
+        {/if}
       {/if}
     </main>
 
-    <aside class="panel context" aria-label="Context panel">
-      <h2>Outline</h2>
-      {#if activeDoc}
-        <Outline outline={activeDoc.outline} />
-      {:else}
-        <p class="pending">Open a document to see its outline.</p>
-      {/if}
-    </aside>
+    {#if layout.context}
+      <aside class="panel context" aria-label="Context panel">
+        <h2>Outline</h2>
+        {#if activeDoc}
+          <Outline outline={activeDoc.outline} />
+        {:else}
+          <p class="pending">Open a document to see its outline.</p>
+        {/if}
+      </aside>
+    {/if}
   </div>
 
-  <StatusBar {workspace} document={activeDoc} state={load.kind} />
+  <StatusBar {workspace} document={activeDoc} state={load.kind} index={indexStatus} />
 </div>
 
 {#if quickOpenVisible}
-  <QuickOpen {documents} onopen={open} onclose={() => (quickOpenVisible = false)} />
+  <QuickOpen
+    {documents}
+    onopen={(id) => void open(id)}
+    onclose={() => (quickOpenVisible = false)}
+  />
 {/if}
 
 <style>
@@ -274,6 +620,43 @@
     font-family: var(--font-mono);
   }
 
+  .bar-actions {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .nav-switch {
+    display: flex;
+    margin: 0 0.5rem 0.6rem;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .nav-switch button {
+    flex: 1;
+    padding: 0.25rem 0.4rem;
+    border: 0;
+    border-right: 1px solid var(--line-strong);
+    border-radius: 0;
+    background: var(--surface-panel);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .nav-switch button:last-child {
+    border-right: 0;
+  }
+
+  .nav-switch button.active {
+    background: var(--surface-raised);
+    color: var(--accent);
+  }
+
   .quick-open-trigger {
     padding: 0.25rem 0.7rem;
     border: 1px solid var(--line-strong);
@@ -309,6 +692,9 @@
   }
 
   .navigation {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     border-right: 1px solid var(--line);
   }
 
@@ -333,6 +719,8 @@
   }
 
   .document-surface {
+    display: flex;
+    flex-direction: column;
     min-width: 0;
     min-height: 0;
     overflow-y: auto;

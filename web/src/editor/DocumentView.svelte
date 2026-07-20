@@ -29,6 +29,28 @@
      * editor has not yet taken in. Drives the E1 and E2 split below.
      */
     diskVersion?: string | null;
+    /**
+     * A source line to reveal and highlight temporarily, set when the document
+     * was opened from a search result (spec 04 section 8).
+     */
+    highlightLine?: number | null;
+    /** Session state to restore for this tab (R13). */
+    restoreMode?: Mode | null;
+    restoreScroll?: number | null;
+    restoreLine?: number | null;
+    /** Reports view state so the session can record it (R13). */
+    onviewstate?: (state: { mode: Mode; previewScroll: number; sourceLine: number }) => void;
+    /** Reports dirty state so the tab strip can show it. */
+    ondirty?: (dirty: boolean) => void;
+    /**
+     * Whether this tab is the visible one.
+     *
+     * An inactive tab renders nothing but stays mounted, so its unsaved buffer
+     * survives a tab switch. Component state lives in the instance, not in the
+     * DOM — and losing typed text by switching tabs would be a data-loss bug,
+     * which spec 08 lists as a release blocker.
+     */
+    active?: boolean;
   }
 
   let {
@@ -37,12 +59,29 @@
     onreload,
     restoredContent = null,
     diskVersion = null,
+    highlightLine = null,
+    restoreMode = null,
+    restoreScroll = null,
+    restoreLine = null,
+    onviewstate,
+    ondirty,
+    active = true,
   }: Props = $props();
 
   /** View modes (spec 04 section 6). Split is the default. */
   type Mode = "split" | "source" | "preview";
-  let mode = $state<Mode>("split");
+  /* svelte-ignore state_referenced_locally */
+  let mode = $state<Mode>(restoreMode ?? "split");
   let wrap = $state(true);
+
+  // Session bookkeeping (R13). These track the live view so the shell can
+  // persist it without reaching into this component.
+  /* svelte-ignore state_referenced_locally */
+  let previewScroll = $state(restoreScroll ?? 0);
+  /* svelte-ignore state_referenced_locally */
+  let sourceLine = $state(restoreLine ?? 0);
+  /* svelte-ignore state_referenced_locally */
+  let pendingScroll = $state<number | null>(restoreScroll);
 
   // The buffer is the user's text. It is never replaced without an explicit
   // action, which is what keeps unsaved work safe (R5 step 5, R6).
@@ -124,7 +163,12 @@
     if (doc.id !== lastLoadedId) {
       lastLoadedId = doc.id;
       seed(restoredContent ?? doc.content, doc.version, restoredContent != null);
-      mode = "split";
+      // A different document adopts its own restored view state, falling back
+      // to the split default (spec 04 section 6, R13).
+      mode = restoreMode ?? "split";
+      previewScroll = restoreScroll ?? 0;
+      sourceLine = restoreLine ?? 0;
+      pendingScroll = restoreScroll;
       return;
     }
 
@@ -135,7 +179,36 @@
     }
   });
 
+  /**
+   * Recovered text can arrive after this tab is already open.
+   *
+   * Session restoration (R13) reopens the document the user was editing, so by
+   * the time they accept the recovery offer the component is mounted and the
+   * mount-time seed has long since run. Without this, accepting recovery
+   * silently did nothing — which acceptance E3 would read as the buffer having
+   * been discarded.
+   */
+  let appliedRestore = $state<string | null>(null);
+
+  $effect(() => {
+    if (restoredContent == null || appliedRestore === restoredContent) return;
+    appliedRestore = restoredContent;
+    buffer = restoredContent;
+    // Deliberately not seeded: the recovered text is unsaved by definition, so
+    // lastServerContent stays at the disk content and the buffer reads dirty.
+    saveState = { kind: "dirty" };
+  });
+
   const dirty = $derived(buffer !== lastServerContent || saveState.kind === "dirty");
+
+  $effect(() => {
+    ondirty?.(dirty);
+  });
+
+  // Publish view state on every change so the shell can persist it (R13).
+  $effect(() => {
+    onviewstate?.({ mode, previewScroll, sourceLine });
+  });
 
   /**
    * An external change was reported and the editor has not caught up.
@@ -299,6 +372,7 @@
   });
 </script>
 
+{#if active}
 <div class="document">
   <header class="document-header">
     <div class="identity">
@@ -400,6 +474,8 @@
           onsave={() => save()}
           onfile={handleFile}
           {revealLine}
+          {highlightLine}
+          online={(line) => (sourceLine = line)}
         />
       </div>
     {/if}
@@ -411,6 +487,13 @@
         <Preview
           document={{ ...doc, content: buffer }}
           {capabilities}
+          {highlightLine}
+          restoreScroll={pendingScroll}
+          onscrollfraction={(fraction) => {
+            previewScroll = fraction;
+            // The restore has served its purpose once the user scrolls.
+            pendingScroll = null;
+          }}
         />
       </div>
     {/if}
@@ -421,6 +504,7 @@
     Wrap long lines
   </label>
 </div>
+{/if}
 
 <style>
   .document {

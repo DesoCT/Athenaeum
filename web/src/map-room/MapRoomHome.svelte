@@ -5,9 +5,20 @@
     workspace: WorkspaceInfo;
     documents: DocumentSummary[];
     onopen: (id: string) => void;
+    /** Recently opened document IDs, most recent first (R2, R13). */
+    recent?: string[];
   }
 
-  let { workspace, documents, onopen }: Props = $props();
+  let { workspace, documents, onopen, recent = [] }: Props = $props();
+
+  // Recents are resolved against the live document list, so an entry for a
+  // document that has since been removed or excluded simply does not appear.
+  const recentDocuments = $derived(
+    recent
+      .map((id) => documents.find((d) => d.id === id))
+      .filter((d): d is DocumentSummary => d != null)
+      .slice(0, 8),
+  );
 
   const errors = $derived((workspace.diagnostics ?? []).filter((d) => d.severity === "error"));
   const warnings = $derived((workspace.diagnostics ?? []).filter((d) => d.severity === "warning"));
@@ -54,6 +65,22 @@
     </section>
   {/if}
 
+  {#if recentDocuments.length > 0}
+    <section class="card" aria-labelledby="recent-heading">
+      <h2 id="recent-heading">Recent</h2>
+      <ul class="documents">
+        {#each recentDocuments as doc (doc.id)}
+          <li>
+            <button type="button" onclick={() => onopen(doc.id)}>
+              <span class="title">{doc.title}</span>
+              <span class="path">{doc.id}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
   {#each workspace.groups as group (group.id)}
     {@const members = inGroup(group.id)}
     {#if members.length > 0}
@@ -76,13 +103,11 @@
   <section class="card next">
     <h2>Not yet built</h2>
     <p>
-      Pinned and recent documents, changed files, and unresolved annotations
-      appear here as later phases land. They are listed as absent rather than
-      shown as empty, so the Map Room never implies data it does not have.
+      Pinned documents, changed files, and unresolved annotations appear here as
+      later phases land. They are listed as absent rather than shown as empty,
+      so the Map Room never implies data it does not have.
     </p>
     <ul>
-      <li><strong>Phase 2</strong> — editing, atomic saves, conflicts, recovery</li>
-      <li><strong>Phase 3</strong> — search index, session restoration</li>
       <li><strong>Phase 4</strong> — annotations, notes, backlinks</li>
       <li><strong>Phase 5</strong> — read-only Git context</li>
     </ul>
