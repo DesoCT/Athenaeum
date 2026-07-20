@@ -55,11 +55,43 @@ a disposable cache: deleting it loses nothing.
 ```bash
 make deps     # install frontend dependencies
 make build    # compile the frontend and embed it in bin/athenaeum
-./bin/athenaeum open examples/athenaeum.toml
+```
+
+Athenaeum opens a folder of Markdown described by one `athenaeum.toml` beside
+it. The smallest useful file is four lines:
+
+```toml
+schema_version = 1
+name = "My Notes"
+root = "."
+
+include = ["**/*.md"]
+```
+
+Drop that next to your notes and open it:
+
+```bash
+./bin/athenaeum open athenaeum.toml
 ```
 
 Athenaeum binds to loopback, prints a launch URL carrying a bootstrap token, and
 opens your browser. Use `serve` instead of `open` to skip the browser.
+
+To check a configuration before launching — it reports every problem at once,
+naming the field and the remedy:
+
+```bash
+./bin/athenaeum validate athenaeum.toml
+```
+
+**[Configuration guide →](docs/configuration.md)** covers which documents appear,
+which files Athenaeum may write to, where pasted images go, rendering features,
+groups, and what to check when something is not working.
+
+One setting is worth knowing up front: `security.writable`. Omit it and every
+included document is editable. Set it and it becomes the complete list —
+anything outside opens read-only, which is how you protect reference material
+you want to read but never edit by accident.
 
 ## Commands
 
