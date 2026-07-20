@@ -337,7 +337,7 @@ function resolveLocalAssets(html: string, documentId: string): string {
  * decodeOnce percent-decodes a URL path, tolerating a malformed sequence by
  * returning the input unchanged rather than throwing.
  */
-function decodeOnce(value: string): string {
+export function decodeOnce(value: string): string {
   try {
     return decodeURIComponent(value);
   } catch {
@@ -354,7 +354,7 @@ function assetUrl(assetId: string): string {
  * resolvePath joins a relative reference to a directory, resolving "." and
  * "..". Returns null when the result escapes the workspace root.
  */
-function resolvePath(baseDir: string, reference: string): string | null {
+export function resolvePath(baseDir: string, reference: string): string | null {
   const target = reference.replace(/^\.\//, "");
   // A root-relative reference is already workspace-relative.
   const segments = target.startsWith("/")

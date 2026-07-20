@@ -8,7 +8,8 @@
     AssetCollisionError,
     ApiError,
   } from "../api/client";
-  import type { Capabilities, DocumentDetail } from "../api/types";
+  import type { Capabilities, DocumentDetail, DocumentSummary } from "../api/types";
+  import { resolveLink } from "../renderer/links";
   import Editor from "./Editor.svelte";
   import ConflictView from "./ConflictView.svelte";
   import Preview from "../renderer/Preview.svelte";
@@ -51,6 +52,10 @@
      * which spec 08 lists as a release blocker.
      */
     active?: boolean;
+    /** The workspace listing, used to resolve links to real documents. */
+    documents?: DocumentSummary[];
+    /** Opens another document, for a link clicked in the preview (R3, R10). */
+    onopen?: (documentId: string) => void;
   }
 
   let {
@@ -66,6 +71,8 @@
     onviewstate,
     ondirty,
     active = true,
+    documents = [],
+    onopen,
   }: Props = $props();
 
   /** View modes (spec 04 section 6). Split is the default. */
@@ -297,6 +304,37 @@
     await onreload();
   }
 
+  let linkNotice = $state<string | null>(null);
+
+  /**
+   * Handles a click in the preview: a link to another document opens it in
+   * place, and anything else may move the source caret (R3, R4, R10).
+   */
+  function onPreviewClick(event: MouseEvent): void {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+
+    const action = resolveLink(target, doc.id, documents);
+    switch (action.kind) {
+      case "document":
+        // Never let the browser navigate to a workspace path: the SPA answers
+        // it with index.html, so the address bar changes and the app reloads.
+        event.preventDefault();
+        onopen?.(action.documentId);
+        return;
+      case "missing":
+        event.preventDefault();
+        linkNotice = `${action.target} is not a document in this workspace.`;
+        setTimeout(() => (linkNotice = null), 6000);
+        return;
+      case "external":
+      case "anchor":
+        return;
+    }
+
+    onHeadingClick(event);
+  }
+
   /** Clicking a preview heading moves the source caret to it (R4). */
   function onHeadingClick(event: MouseEvent): void {
     const target = (event.target as HTMLElement)?.closest("[data-line]");
@@ -396,6 +434,7 @@
   }
 
   let assetError = $state<string | null>(null);
+
 
   const stateLabel = $derived.by(() => {
     // read_only covers encoding and size limits; a document outside the write
@@ -507,7 +546,7 @@
     {#if mode !== "source"}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="preview-pane" onclick={onHeadingClick}>
+      <div class="preview-pane" onclick={onPreviewClick}>
         <Preview
           document={{ ...doc, content: buffer }}
           {capabilities}
@@ -522,6 +561,12 @@
       </div>
     {/if}
   </div>
+
+  {#if linkNotice}
+    <aside class="notice" role="status">
+      <p>{linkNotice}</p>
+    </aside>
+  {/if}
 
   {#if reloadNotice}
     <aside class="notice" role="status">

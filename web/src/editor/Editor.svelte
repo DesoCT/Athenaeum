@@ -137,9 +137,24 @@
     textarea.scrollTop = Math.max(0, (clamped - 3) * lineHeight);
   }
 
+  /**
+   * Reporting is suppressed briefly after a programmatic scroll, so revealing a
+   * line from the preview cannot bounce straight back and fight the user.
+   */
+  let suppressUntil = 0;
+
+  /** topVisibleLine estimates the first source line on screen. */
+  function topVisibleLine(): number {
+    if (!textarea) return 1;
+    const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight || "20") || 20;
+    return Math.floor(textarea.scrollTop / lineHeight) + 1;
+  }
+
   /** Keep the gutter aligned with the textarea while scrolling. */
   function onscroll(): void {
     if (gutter && textarea) gutter.scrollTop = textarea.scrollTop;
+    if (Date.now() < suppressUntil) return;
+    online?.(topVisibleLine());
   }
 
   $effect(() => {
