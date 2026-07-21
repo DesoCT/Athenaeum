@@ -14,6 +14,7 @@ import (
 	"athenaeum/internal/annotations"
 	"athenaeum/internal/assets"
 	"athenaeum/internal/documents"
+	"athenaeum/internal/gitview"
 	"athenaeum/internal/notes"
 	"athenaeum/internal/relationships"
 	"athenaeum/internal/search"
@@ -73,6 +74,8 @@ type Options struct {
 	// Relationships computes outgoing links and backlinks (R10). Nil disables
 	// the relationship route.
 	Relationships *relationships.Service
+	// Git provides read-only repository context (R12).
+	Git *gitview.Adapter
 
 	// Workspaces lists the registry and changes which workspace is open. Nil
 	// disables the picker routes entirely, which is what every existing test
@@ -144,6 +147,10 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT "+APIPrefix+"/notes/{id}", s.guard(http.HandlerFunc(s.handleNoteUpdate)))
 	s.mux.Handle("DELETE "+APIPrefix+"/notes/{id}", s.guard(http.HandlerFunc(s.handleNoteDelete)))
 	s.mux.Handle("GET "+APIPrefix+"/relationships/{id...}", s.guard(http.HandlerFunc(s.handleRelationships)))
+	s.mux.Handle("GET "+APIPrefix+"/git/status", s.guard(http.HandlerFunc(s.handleGitStatus)))
+	s.mux.Handle("GET "+APIPrefix+"/git/diff/{id...}", s.guard(http.HandlerFunc(s.handleGitDiff)))
+	s.mux.Handle("GET "+APIPrefix+"/git/history/{id...}", s.guard(http.HandlerFunc(s.handleGitHistory)))
+	s.mux.Handle("GET "+APIPrefix+"/git/blame/{id...}", s.guard(http.HandlerFunc(s.handleGitBlame)))
 	s.mux.Handle("/", s.guard(http.HandlerFunc(s.handleFrontend)))
 }
 

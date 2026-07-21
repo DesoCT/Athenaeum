@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { DocumentSummary, WorkspaceInfo } from "../api/types";
   import type { AnnotationOverview } from "../annotations/types";
-  import { getAnnotationOverview, ApiError } from "../api/client";
+  import type { GitFile } from "../git/types";
+  import { getAnnotationOverview, getGitStatus, ApiError } from "../api/client";
 
   interface Props {
     workspace: WorkspaceInfo;
@@ -32,6 +33,20 @@
 
   const pins = $derived(overview?.pins ?? []);
   const unresolved = $derived(overview?.unresolved ?? []);
+
+  // Changed files from Git status (spec 04 section 3). Absent when Git is off,
+  // never an error on the home.
+  let changed = $state<GitFile[]>([]);
+  $effect(() => {
+    void generation;
+    if (!workspace.capabilities.git) {
+      changed = [];
+      return;
+    }
+    getGitStatus()
+      .then((s) => (changed = s.files.filter((f) => f.state !== "clean")))
+      .catch(() => (changed = []));
+  });
 
   function titleOf(id: string): string {
     return documents.find((d) => d.id === id)?.title ?? id;
@@ -128,6 +143,22 @@
     </section>
   {/if}
 
+  {#if changed.length > 0}
+    <section class="card" aria-labelledby="changed-heading">
+      <h2 id="changed-heading">Changed</h2>
+      <ul class="documents">
+        {#each changed as file (file.document_id)}
+          <li>
+            <button type="button" onclick={() => onopen(file.document_id)}>
+              <span class="title">{titleOf(file.document_id)}</span>
+              <span class="git-state {file.state}">{file.state}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
   {#if recentDocuments.length > 0}
     <section class="card" aria-labelledby="recent-heading">
       <h2 id="recent-heading">Recent</h2>
@@ -163,17 +194,6 @@
     {/if}
   {/each}
 
-  <section class="card next">
-    <h2>Not yet built</h2>
-    <p>
-      Changed files appear here once the read-only Git context lands. They are
-      listed as absent rather than shown as empty, so the Map Room never implies
-      data it does not have.
-    </p>
-    <ul>
-      <li><strong>Phase 5</strong> — read-only Git context</li>
-    </ul>
-  </section>
 </div>
 
 <style>
@@ -271,6 +291,22 @@
     color: var(--text-muted);
   }
 
+  .git-state {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+
+  .git-state.modified {
+    color: var(--warn);
+  }
+
+  .git-state.untracked {
+    color: var(--accent);
+  }
+
   .diagnostic {
     padding: 0.5rem 0.75rem;
     border-left: 2px solid var(--warn);
@@ -298,18 +334,5 @@
     margin: 0.15rem 0 0;
     font-size: 0.8rem;
     color: var(--text-muted);
-  }
-
-  .next p {
-    margin: 0 0 0.75rem;
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-  }
-
-  .next ul {
-    margin: 0;
-    padding-left: 1.1rem;
-    color: var(--text-muted);
-    font-size: 0.85rem;
   }
 </style>

@@ -22,6 +22,7 @@ import type {
 } from "../annotations/types";
 import type { Note, NoteSummary, NoteLink, CreateNoteInput } from "../notes/types";
 import type { RelationshipResult } from "../relationships/types";
+import type { GitStatus, GitDiff, GitHistory, GitBlame } from "../git/types";
 
 const API_PREFIX = "/api/v1";
 
@@ -537,4 +538,24 @@ export function getRelationships(documentId: string): Promise<RelationshipResult
 /** getAnnotationOverview returns workspace-wide pins and unresolved comments (spec 04 section 3). */
 export function getAnnotationOverview(): Promise<AnnotationOverview> {
   return request<AnnotationOverview>("/annotations/overview");
+}
+
+/** getGitStatus returns repository availability and per-file states (R12, J1). */
+export function getGitStatus(): Promise<GitStatus> {
+  return request<GitStatus>("/git/status");
+}
+
+/** getGitDiff returns the working-tree diff for a document (J1). */
+export function getGitDiff(documentId: string): Promise<GitDiff> {
+  return request<GitDiff>(`/git/diff/${encodePath(documentId)}`);
+}
+
+/** getGitHistory returns a document's commit history (J2). */
+export function getGitHistory(documentId: string): Promise<GitHistory> {
+  return request<GitHistory>(`/git/history/${encodePath(documentId)}`);
+}
+
+/** getGitBlame returns per-line attribution for a document (J2). */
+export function getGitBlame(documentId: string): Promise<GitBlame> {
+  return request<GitBlame>(`/git/blame/${encodePath(documentId)}`);
 }

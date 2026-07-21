@@ -195,7 +195,9 @@ func TestOnlyReadOnlySubcommandsAreReachable(t *testing.T) {
 // TestAllowListIsExhaustive documents the complete set of reachable commands,
 // so widening it is a deliberate, reviewed edit rather than a quiet one.
 func TestAllowListIsExhaustive(t *testing.T) {
-	want := map[string]bool{"rev-parse": true, "status": true}
+	want := map[string]bool{
+		"rev-parse": true, "status": true, "diff": true, "log": true, "blame": true,
+	}
 	if len(allowed) != len(want) {
 		t.Fatalf("the allow-list has %d entries, expected %d: %v", len(allowed), len(want), allowed)
 	}
@@ -247,5 +249,88 @@ func TestSymlinkedWorkspacePrefix(t *testing.T) {
 	if got != StateUntracked {
 		t.Fatalf("State via a symlinked prefix = %q, want %q; the whole "+
 			"workspace reports clean when the two path forms disagree", got, StateUntracked)
+	}
+}
+
+// TestDiffMatchesGit is acceptance J1: the working-tree diff matches
+// `git diff -- <file>`.
+func TestDiffMatchesGit(t *testing.T) {
+	root := gitRepo(t)
+	write(t, root, "docs/a.md", "# A\n\noriginal\n")
+	commitAll(t, root)
+	write(t, root, "docs/a.md", "# A\n\nedited\n")
+
+	adapter := New(root, nil)
+	got, err := adapter.Diff("docs/a.md")
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+
+	cmd := exec.Command("git", "diff", "--no-color", "--", "docs/a.md")
+	cmd.Dir = root
+	want, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git diff: %v", err)
+	}
+	if got != string(want) {
+		t.Fatalf("diff mismatch:\n got: %q\nwant: %q", got, want)
+	}
+	if got == "" {
+		t.Fatal("expected a non-empty diff for an edited file")
+	}
+}
+
+// TestHistoryAndBlame is acceptance J2.
+func TestHistoryAndBlame(t *testing.T) {
+	root := gitRepo(t)
+	write(t, root, "docs/a.md", "line one\n")
+	commitAll(t, root)
+	write(t, root, "docs/a.md", "line one\nline two\n")
+	commitAll(t, root)
+
+	adapter := New(root, nil)
+
+	commits, err := adapter.History("docs/a.md")
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(commits) != 2 {
+		t.Fatalf("history has %d commits, want 2", len(commits))
+	}
+	if commits[0].Subject != "fixture" || commits[0].Hash == "" || commits[0].Author != "Fixture" {
+		t.Fatalf("first commit malformed: %+v", commits[0])
+	}
+
+	blame, err := adapter.Blame("docs/a.md")
+	if err != nil {
+		t.Fatalf("Blame: %v", err)
+	}
+	if len(blame) != 2 {
+		t.Fatalf("blame has %d lines, want 2", len(blame))
+	}
+	if blame[0].Line != 1 || blame[0].Content != "line one" || blame[0].Hash == "" {
+		t.Fatalf("blame line 1 malformed: %+v", blame[0])
+	}
+	if blame[1].Content != "line two" {
+		t.Fatalf("blame line 2 = %q, want 'line two'", blame[1].Content)
+	}
+}
+
+// TestReadOpsUnavailableWithoutRepo is part of J4: the read operations report
+// unavailability rather than fabricating data.
+func TestReadOpsUnavailableWithoutRepo(t *testing.T) {
+	dir := t.TempDir()
+	adapter := New(dir, nil)
+	if adapter.Available() {
+		t.Skip("unexpectedly inside a repository")
+	}
+	if _, err := adapter.Diff("a.md"); err != ErrUnavailable {
+		t.Errorf("Diff error = %v, want ErrUnavailable", err)
+	}
+	if _, err := adapter.History("a.md"); err != ErrUnavailable {
+		t.Errorf("History error = %v, want ErrUnavailable", err)
+	}
+	if _, err := adapter.Blame("a.md"); err != ErrUnavailable {
+		t.Errorf("Blame error = %v, want ErrUnavailable", err)
 	}
 }

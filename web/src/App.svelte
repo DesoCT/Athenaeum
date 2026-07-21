@@ -35,6 +35,7 @@
   import NoteView from "./notes/NoteView.svelte";
   import NotesPanel from "./notes/NotesPanel.svelte";
   import RelationshipsPanel from "./relationships/RelationshipsPanel.svelte";
+  import GitPanel from "./git/GitPanel.svelte";
   import RecoveryPrompt from "./editor/RecoveryPrompt.svelte";
   import Outline from "./components/Outline.svelte";
   import StatusBar from "./components/StatusBar.svelte";
@@ -91,8 +92,8 @@
   // documents share one tab list, distinguished by the id prefix, so the tab
   // strip, close, and switch logic serve both (R9).
   let loadedNotes = $state<Record<string, Note>>({});
-  /** Which context-panel tab is showing: the outline, notes, or links. */
-  let contextTab = $state<"outline" | "notes" | "links">("outline");
+  /** Which context-panel tab is showing: outline, notes, links, or git. */
+  let contextTab = $state<"outline" | "notes" | "links" | "git">("outline");
   /** Bumped to make the notes panel re-read after a create or delete. */
   let notesReload = $state(0);
   /** Bumped when the corpus changes, so the links panel refreshes backlinks. */
@@ -879,6 +880,16 @@
           >
             Links
           </button>
+          {#if workspace?.capabilities.git}
+            <button
+              type="button"
+              class:active={contextTab === "git"}
+              aria-pressed={contextTab === "git"}
+              onclick={() => (contextTab = "git")}
+            >
+              Git
+            </button>
+          {/if}
         </div>
 
         {#if contextTab === "outline"}
@@ -895,11 +906,16 @@
             onopen={openNoteTab}
             onopenlink={(link) => void openLink(link)}
           />
-        {:else}
+        {:else if contextTab === "links"}
           <RelationshipsPanel
             documentId={activeId && !isNoteTab(activeId) ? activeId : null}
             generation={workspaceGeneration + relationshipsGen}
             onopen={(id) => void open(id)}
+          />
+        {:else}
+          <GitPanel
+            documentId={activeId && !isNoteTab(activeId) ? activeId : null}
+            generation={workspaceGeneration + relationshipsGen}
           />
         {/if}
       </aside>

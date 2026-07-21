@@ -295,6 +295,10 @@ func (c *controller) build(cfg *config.Config) (*loaded, error) {
 	var gitAdapter *gitview.Adapter
 	if cfg.Git.Enabled {
 		gitAdapter = gitview.New(cfg.AbsRoot, c.opts.Logger)
+		// The panel reads status, diff, history, and blame through this adapter
+		// (R12). It is the same instance the search filter and the watcher bridge
+		// use, so there is one status snapshot per workspace.
+		entry.bound.Git = gitAdapter
 	}
 
 	// The disposable FTS projection (R7, D-014). It lives under the OS cache
