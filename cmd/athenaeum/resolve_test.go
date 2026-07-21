@@ -66,7 +66,12 @@ func TestExplicitPathWins(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("an explicit path resolved to the picker")
 	}
-	if !strings.HasPrefix(cfg.SourcePath, mustEval(t, elsewhere)) {
+	// Canonicalise both sides before comparing: SourcePath is an absolute path
+	// but not necessarily symlink-resolved, while the temp directory can sit
+	// under a symlinked prefix (macOS /var -> /private/var). Comparing raw
+	// paths there fails spuriously, so resolve both (the "canonicalise before
+	// comparing" rule from internal/security/paths.go).
+	if !strings.HasPrefix(mustEval(t, cfg.SourcePath), mustEval(t, elsewhere)) {
 		t.Errorf("resolved %q, want the explicitly named workspace under %q", cfg.SourcePath, elsewhere)
 	}
 }
