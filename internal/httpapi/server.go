@@ -11,8 +11,10 @@ import (
 	"strings"
 	"sync"
 
+	"athenaeum/internal/annotations"
 	"athenaeum/internal/assets"
 	"athenaeum/internal/documents"
+	"athenaeum/internal/notes"
 	"athenaeum/internal/search"
 	"athenaeum/internal/security"
 	"athenaeum/internal/session"
@@ -61,6 +63,12 @@ type Options struct {
 	Search *search.Service
 	// SessionState persists open tabs and layout (R13).
 	SessionState *session.StateStore
+	// Annotations reads and writes annotation sidecars (R8). Nil disables the
+	// annotation routes.
+	Annotations *annotations.Service
+	// Notes reads and writes free-standing note files (R9). Nil disables the
+	// note routes.
+	Notes *notes.Service
 
 	// Workspaces lists the registry and changes which workspace is open. Nil
 	// disables the picker routes entirely, which is what every existing test
@@ -121,6 +129,15 @@ func (s *Server) routes() {
 	s.mux.Handle("GET "+APIPrefix+"/recovery", s.guard(http.HandlerFunc(s.handleRecoveryList)))
 	s.mux.Handle("PUT "+APIPrefix+"/recovery", s.guard(http.HandlerFunc(s.handleRecoveryPut)))
 	s.mux.Handle("DELETE "+APIPrefix+"/recovery/{id...}", s.guard(http.HandlerFunc(s.handleRecoveryDelete)))
+	s.mux.Handle("GET "+APIPrefix+"/annotations", s.guard(http.HandlerFunc(s.handleAnnotationList)))
+	s.mux.Handle("POST "+APIPrefix+"/annotations", s.guard(http.HandlerFunc(s.handleAnnotationCreate)))
+	s.mux.Handle("PATCH "+APIPrefix+"/annotations/{id}", s.guard(http.HandlerFunc(s.handleAnnotationUpdate)))
+	s.mux.Handle("DELETE "+APIPrefix+"/annotations/{id}", s.guard(http.HandlerFunc(s.handleAnnotationDelete)))
+	s.mux.Handle("GET "+APIPrefix+"/notes", s.guard(http.HandlerFunc(s.handleNoteList)))
+	s.mux.Handle("POST "+APIPrefix+"/notes", s.guard(http.HandlerFunc(s.handleNoteCreate)))
+	s.mux.Handle("GET "+APIPrefix+"/notes/{id}", s.guard(http.HandlerFunc(s.handleNoteRead)))
+	s.mux.Handle("PUT "+APIPrefix+"/notes/{id}", s.guard(http.HandlerFunc(s.handleNoteUpdate)))
+	s.mux.Handle("DELETE "+APIPrefix+"/notes/{id}", s.guard(http.HandlerFunc(s.handleNoteDelete)))
 	s.mux.Handle("/", s.guard(http.HandlerFunc(s.handleFrontend)))
 }
 

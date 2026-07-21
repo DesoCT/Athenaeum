@@ -3,13 +3,16 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 
+	"athenaeum/internal/annotations"
 	"athenaeum/internal/assets"
 	"athenaeum/internal/config"
 	"athenaeum/internal/documents"
 	"athenaeum/internal/gitview"
 	"athenaeum/internal/httpapi"
+	"athenaeum/internal/notes"
 	"athenaeum/internal/registry"
 	"athenaeum/internal/search"
 	"athenaeum/internal/session"
@@ -240,6 +243,30 @@ func (c *controller) build(cfg *config.Config) (*loaded, error) {
 		}
 	}
 
+	// Annotations (R8). Shared sidecars live under the workspace and are always
+	// available; personal sidecars need the user data directory, so they are
+	// enabled only when it resolved. Either store being off degrades that
+	// visibility alone, never document reading or editing.
+	personalAnnotations := ""
+	if dirsReady {
+		personalAnnotations = filepath.Join(dirs.Data, "annotations")
+	}
+	entry.bound.Annotations = annotations.NewService(annotations.Options{
+		PersonalDir: personalAnnotations,
+		SharedDir:   filepath.Join(cfg.AbsRoot, ".athenaeum", "shared", "annotations"),
+		Docs:        documentSource{docs: entry.bound.Documents},
+	})
+
+	// Notes (R9), the same personal/shared split as annotations.
+	personalNotes := ""
+	if dirsReady {
+		personalNotes = filepath.Join(dirs.Data, "notes")
+	}
+	entry.bound.Notes = notes.NewService(notes.Options{
+		PersonalDir: personalNotes,
+		SharedDir:   filepath.Join(cfg.AbsRoot, ".athenaeum", "shared", "notes"),
+	})
+
 	// The watcher is advisory: a failure costs live updates, never correctness,
 	// so it must not stop a workspace opening (spec 02 section 3.4).
 	if w, err := watcher.New(ws, c.opts.Logger); err != nil {
@@ -318,4 +345,22 @@ func (c *controller) shutdown() {
 	}
 	c.current.close()
 	c.current = nil
+}
+
+// documentSource adapts the document service to annotations.DocumentSource,
+// supplying the current body and authoritative outline (ADR-0003) that anchor
+// repair needs while keeping the annotations package free of a documents
+// import.
+type documentSource struct{ docs *documents.Service }
+
+func (d documentSource) Source(id string) (string, []annotations.Heading, error) {
+	doc, err := d.docs.Read(id)
+	if err != nil {
+		return "", nil, err
+	}
+	headings := make([]annotations.Heading, len(doc.Outline))
+	for i, h := range doc.Outline {
+		headings[i] = annotations.Heading{Path: h.Path, Line: h.Line}
+	}
+	return doc.Content, headings, nil
 }

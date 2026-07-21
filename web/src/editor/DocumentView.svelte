@@ -13,6 +13,7 @@
   import Editor from "./Editor.svelte";
   import ConflictView from "./ConflictView.svelte";
   import Preview from "../renderer/Preview.svelte";
+  import AnnotationSidebar from "../annotations/AnnotationSidebar.svelte";
 
   interface Props {
     document: DocumentDetail;
@@ -435,6 +436,10 @@
 
   let assetError = $state<string | null>(null);
 
+  // The rendered article, handed over by Preview so the annotation layer can
+  // anchor to its blocks and observe selections (R8).
+  let previewRoot = $state<HTMLElement | null>(null);
+
 
   const stateLabel = $derived.by(() => {
     // read_only covers encoding and size limits; a document outside the write
@@ -557,6 +562,13 @@
             // The restore has served its purpose once the user scrolls.
             pendingScroll = null;
           }}
+          onrendered={(root) => (previewRoot = root)}
+        />
+        <AnnotationSidebar
+          documentId={doc.id}
+          root={previewRoot}
+          outline={doc.outline}
+          {capabilities}
         />
       </div>
     {/if}
@@ -752,9 +764,18 @@
   }
 
   .preview-pane {
+    position: relative;
     min-height: 0;
     min-width: 0;
     overflow-y: auto;
+    /* Reserve the right margin for the annotation column (R8). */
+    padding-right: 17rem;
+  }
+
+  @media (max-width: 1100px) {
+    .preview-pane {
+      padding-right: 0;
+    }
   }
 
   .doc-warnings,

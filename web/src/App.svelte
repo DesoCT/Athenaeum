@@ -15,6 +15,7 @@
     ApiError,
     type RecoveryBuffer,
   } from "./api/client";
+  import type { Note, NoteLink } from "./notes/types";
   import type {
     DocumentDetail,
     DocumentSummary,
@@ -31,6 +32,8 @@
   import MapRoomHome from "./map-room/MapRoomHome.svelte";
   import WorkspacePicker from "./map-room/WorkspacePicker.svelte";
   import DocumentView from "./editor/DocumentView.svelte";
+  import NoteView from "./notes/NoteView.svelte";
+  import NotesPanel from "./notes/NotesPanel.svelte";
   import RecoveryPrompt from "./editor/RecoveryPrompt.svelte";
   import Outline from "./components/Outline.svelte";
   import StatusBar from "./components/StatusBar.svelte";
@@ -83,6 +86,14 @@
    */
   let openTabs = $state<string[]>([]);
   let loadedDocs = $state<Record<string, DocumentDetail>>({});
+  // Open note tabs, keyed by their tab id ("note:<visibility>:<id>"). Notes and
+  // documents share one tab list, distinguished by the id prefix, so the tab
+  // strip, close, and switch logic serve both (R9).
+  let loadedNotes = $state<Record<string, Note>>({});
+  /** Which context-panel tab is showing: the outline or the notes list. */
+  let contextTab = $state<"outline" | "notes">("outline");
+  /** Bumped to make the notes panel re-read after a create or delete. */
+  let notesReload = $state(0);
   let tabView = $state<Record<string, { mode: ViewMode; previewScroll: number; sourceLine: number }>>({});
   let dirtyDocs = $state<Record<string, boolean>>({});
   let recent = $state<string[]>([]);
@@ -139,12 +150,25 @@
   }
 
   const tabDescriptors = $derived(
-    openTabs.map((id) => ({
-      documentId: id,
-      title: loadedDocs[id]?.title ?? documents.find((d) => d.id === id)?.title ?? id,
-      dirty: dirtyDocs[id] === true,
-    })),
+    openTabs.map((id) =>
+      isNoteTab(id)
+        ? { documentId: id, title: loadedNotes[id]?.title ?? "Note", dirty: dirtyDocs[id] === true }
+        : {
+            documentId: id,
+            title: loadedDocs[id]?.title ?? documents.find((d) => d.id === id)?.title ?? id,
+            dirty: dirtyDocs[id] === true,
+          },
+    ),
   );
+
+  /** A tab id names a note when it carries the note prefix. */
+  function isNoteTab(id: string): boolean {
+    return id.startsWith("note:");
+  }
+
+  function noteTabId(note: { visibility: string; id: string }): string {
+    return `note:${note.visibility}:${note.id}`;
+  }
 
   // Unsaved buffers found at startup. They are offered, never applied (E3).
   let recoveryBuffers = $state<RecoveryBuffer[]>([]);
@@ -400,16 +424,70 @@
     }
   }
 
+  /** activateTab switches to a tab, fetching a document tab's content lazily. */
+  function activateTab(id: string): void {
+    if (isNoteTab(id)) {
+      userActed = true;
+      activeId = id;
+      docError = null;
+      return;
+    }
+    void open(id);
+  }
+
+  /** openNoteTab opens a note in the main surface, reusing the tab system. */
+  function openNoteTab(note: Note): void {
+    userActed = true;
+    const id = noteTabId(note);
+    loadedNotes = { ...loadedNotes, [id]: note };
+    if (!openTabs.includes(id)) {
+      openTabs = [...openTabs, id].slice(-MAX_TABS);
+    }
+    activeId = id;
+    docError = null;
+  }
+
+  /**
+   * openLink follows a note's typed link to a document, landing on the linked
+   * heading when there is one (acceptance G4). The heading string is matched
+   * against the authoritative outline (ADR-0003), so navigation lands on the
+   * real source line rather than a guess.
+   */
+  async function openLink(link: NoteLink): Promise<void> {
+    if (!link.document) return;
+    let line: number | undefined;
+    if (link.heading) {
+      try {
+        const doc = loadedDocs[link.document] ?? (await getDocument(link.document));
+        const heading = doc.outline.find(
+          (h) => h.text === link.heading || h.slug === link.heading || h.path.at(-1) === link.heading,
+        );
+        if (heading) line = heading.line;
+      } catch {
+        // A link to a document that cannot be read still opens the document,
+        // which surfaces the real error there rather than swallowing it here.
+      }
+    }
+    await open(link.document, line);
+  }
+
   function closeTab(id: string): void {
     userActed = true;
     openTabs = openTabs.filter((entry) => entry !== id);
-    closedTabs = [id, ...closedTabs.filter((entry) => entry !== id)].slice(0, 10);
+    // Only documents are reopenable from history; a note reopens from its panel,
+    // and reopening a note id through the document path would try to fetch it as
+    // a document.
+    if (!isNoteTab(id)) {
+      closedTabs = [id, ...closedTabs.filter((entry) => entry !== id)].slice(0, 10);
+    }
 
     // Dropping the loaded document releases its buffer. That is safe only
     // because closing is an explicit action and the recovery store already
     // holds anything unsaved (acceptance E3).
     const { [id]: _dropped, ...rest } = loadedDocs;
     loadedDocs = rest;
+    const { [id]: _note, ...restNotes } = loadedNotes;
+    loadedNotes = restNotes;
     delete dirtyDocs[id];
     delete tabView[id];
     // The restored view state has served its purpose. Keeping it would make a
@@ -479,13 +557,17 @@
     sessionTimer = setTimeout(() => {
       void saveSession({
         schema_version: 1,
-        tabs: openTabs.map((id) => ({
-          document_id: id,
-          mode: tabView[id]?.mode ?? "split",
-          preview_scroll: tabView[id]?.previewScroll ?? 0,
-          source_line: tabView[id]?.sourceLine ?? 0,
-        })),
-        active_document: activeId ?? undefined,
+        // Only documents are restored across sessions; note tabs reopen from the
+        // notes panel, and a note id is not a document the restore path can read.
+        tabs: openTabs
+          .filter((id) => !isNoteTab(id))
+          .map((id) => ({
+            document_id: id,
+            mode: tabView[id]?.mode ?? "split",
+            preview_scroll: tabView[id]?.previewScroll ?? 0,
+            source_line: tabView[id]?.sourceLine ?? 0,
+          })),
+        active_document: activeId && !isNoteTab(activeId) ? activeId : undefined,
         recent,
         layout,
       });
@@ -673,7 +755,7 @@
       <TabStrip
         tabs={tabDescriptors}
         {activeId}
-        onselect={(id) => void open(id)}
+        onselect={activateTab}
         onclose={closeTab}
       />
       {#if load.kind === "error"}
@@ -720,7 +802,19 @@
         <!-- Every loaded tab stays mounted; only the active one renders, so an
              unsaved buffer survives a tab switch. -->
         {#each openTabs as id (id)}
-          {#if loadedDocs[id]}
+          {#if isNoteTab(id) && loadedNotes[id]}
+            <NoteView
+              note={loadedNotes[id]}
+              capabilities={workspace.capabilities}
+              active={id === activeId && !docError}
+              onopenlink={(link) => void openLink(link)}
+              ondirty={(dirty) => recordDirty(id, dirty)}
+              onclosed={() => {
+                closeTab(id);
+                notesReload += 1;
+              }}
+            />
+          {:else if loadedDocs[id]}
             <DocumentView
               document={loadedDocs[id]}
               capabilities={workspace.capabilities}
@@ -748,11 +842,39 @@
 
     {#if layout.context}
       <aside class="panel context" aria-label="Context panel">
-        <h2>Outline</h2>
-        {#if activeDoc}
-          <Outline outline={activeDoc.outline} />
+        <div class="nav-switch" role="group" aria-label="Context view">
+          <button
+            type="button"
+            class:active={contextTab === "outline"}
+            aria-pressed={contextTab === "outline"}
+            onclick={() => (contextTab = "outline")}
+          >
+            Outline
+          </button>
+          <button
+            type="button"
+            class:active={contextTab === "notes"}
+            aria-pressed={contextTab === "notes"}
+            onclick={() => (contextTab = "notes")}
+          >
+            Notes
+          </button>
+        </div>
+
+        {#if contextTab === "outline"}
+          {#if activeDoc}
+            <Outline outline={activeDoc.outline} />
+          {:else}
+            <p class="pending">Open a document to see its outline.</p>
+          {/if}
         {:else}
-          <p class="pending">Open a document to see its outline.</p>
+          <NotesPanel
+            {documents}
+            generation={workspaceGeneration + notesReload}
+            activeId={activeId && isNoteTab(activeId) ? activeId.split(":").slice(2).join(":") : null}
+            onopen={openNoteTab}
+            onopenlink={(link) => void openLink(link)}
+          />
         {/if}
       </aside>
     {/if}
@@ -888,15 +1010,6 @@
   .context {
     border-left: 1px solid var(--line);
     padding: 1rem;
-  }
-
-  .panel h2 {
-    margin: 0 0 0.5rem 0.5rem;
-    font-size: 0.7rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-secondary);
   }
 
   .pending {
