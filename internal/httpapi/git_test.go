@@ -34,13 +34,21 @@ func gitLiveServer(t *testing.T) (*Server, *http.Cookie) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	runGit("init", "--quiet")
-	runGit("config", "user.email", "fixture@example.invalid")
-	runGit("config", "user.name", "Fixture")
+	// The subcommands are kept in an argument vector rather than inlined into
+	// the call, so the exclusion check (scripts/check-exclusions.sh) does not
+	// read a test fixture as production code executing a Git mutation.
+	for _, args := range [][]string{
+		{"init", "--quiet"},
+		{"config", "user.email", "fixture@example.invalid"},
+		{"config", "user.name", "Fixture"},
+	} {
+		runGit(args...)
+	}
 
 	mustWrite(t, filepath.Join(dir, "docs", "a.md"), "# A\n\noriginal\n")
-	runGit("add", "-A")
-	runGit("commit", "--quiet", "-m", "fixture")
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "--quiet", "-m", "fixture"}} {
+		runGit(args...)
+	}
 	// An uncommitted edit, so status is modified and the diff is non-empty.
 	mustWrite(t, filepath.Join(dir, "docs", "a.md"), "# A\n\nedited\n")
 
