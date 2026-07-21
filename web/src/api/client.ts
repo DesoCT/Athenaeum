@@ -1,4 +1,5 @@
 import type {
+  ActiveWorkspace,
   ApiErrorBody,
   ConflictInfo,
   SaveResult,
@@ -10,6 +11,7 @@ import type {
   SearchResponse,
   SessionState,
   WorkspaceInfo,
+  WorkspaceRegistry,
 } from "./types";
 
 const API_PREFIX = "/api/v1";
@@ -67,6 +69,52 @@ export function getHealth(): Promise<Health> {
 
 export function getWorkspace(): Promise<WorkspaceInfo> {
   return request<WorkspaceInfo>("/workspace");
+}
+
+/**
+ * listWorkspaces reads the workspace registry (ADR-0004).
+ *
+ * The registry is re-read on every call because it is hand-edited; a user who
+ * adds an entry expects to see it without restarting (C8). A process started
+ * without a registry answers 404, which the picker treats as "no registry"
+ * rather than an error.
+ */
+export function listWorkspaces(): Promise<WorkspaceRegistry> {
+  return request<WorkspaceRegistry>("/workspaces");
+}
+
+/**
+ * openWorkspace switches the process to a registered workspace.
+ *
+ * The previous workspace is fully unloaded first: search, the tree, the write
+ * boundary, and every other service are rebuilt for the new root, and at no
+ * moment are two roots loaded (ADR-0004). The caller reloads its own state
+ * afterwards, because everything it holds belonged to the workspace just left.
+ */
+export async function openWorkspace(name: string): Promise<ActiveWorkspace | null> {
+  const response = await fetch(`${API_PREFIX}/workspaces/open`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, await readError(response));
+  }
+  const body = (await response.json()) as { active: ActiveWorkspace | null };
+  return body.active;
+}
+
+/** leaveWorkspace returns the process to the picker (ADR-0004). */
+export async function leaveWorkspace(): Promise<void> {
+  const response = await fetch(`${API_PREFIX}/workspaces/leave`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, await readError(response));
+  }
 }
 
 export async function listDocuments(): Promise<DocumentSummary[]> {

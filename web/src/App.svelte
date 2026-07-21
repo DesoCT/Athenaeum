@@ -9,6 +9,9 @@
     getIndexStatus,
     getSession,
     saveSession,
+    listWorkspaces,
+    openWorkspace,
+    leaveWorkspace,
     ApiError,
     type RecoveryBuffer,
   } from "./api/client";
@@ -20,11 +23,13 @@
     SessionTab,
     ViewMode,
     WorkspaceInfo,
+    WorkspaceRegistry,
   } from "./api/types";
   import { buildTree } from "./map-room/tree";
   import FileTree from "./map-room/FileTree.svelte";
   import QuickOpen from "./map-room/QuickOpen.svelte";
   import MapRoomHome from "./map-room/MapRoomHome.svelte";
+  import WorkspacePicker from "./map-room/WorkspacePicker.svelte";
   import DocumentView from "./editor/DocumentView.svelte";
   import RecoveryPrompt from "./editor/RecoveryPrompt.svelte";
   import Outline from "./components/Outline.svelte";
@@ -36,6 +41,29 @@
     | { kind: "loading" }
     | { kind: "ready" }
     | { kind: "error"; code: string; message: string };
+
+  /**
+   * The top-level screen (ADR-0004).
+   *
+   * "picker" and "workspace" are mutually exclusive by construction: the picker
+   * is shown only when no workspace is open, and a workspace surface is shown
+   * only when one is. There is no state in which both are visible, which is the
+   * frontend half of the single-root guarantee — two roots are never on screen
+   * at the same moment.
+   */
+  let screen = $state<"loading" | "picker" | "workspace">("loading");
+
+  /** The registry, when this process supports a launcher; null otherwise. */
+  let registry = $state<WorkspaceRegistry | null>(null);
+  let pickerBusy = $state(false);
+  let pickerError = $state<{ code: string; message: string; remedy?: string } | null>(null);
+
+  /**
+   * Incremented on every switch. The change stream and the index poller depend
+   * on it, so they tear down and reconnect to the new workspace rather than
+   * lingering on the one just left.
+   */
+  let workspaceGeneration = $state(0);
 
   let load = $state<Load>({ kind: "loading" });
   let workspace = $state<WorkspaceInfo | null>(null);
@@ -145,7 +173,36 @@
    */
   const showRecovery = $derived(recoveryBuffers.length > 0 && !recoveryDismissed);
 
+  /**
+   * boot decides between the picker and a workspace surface (ADR-0004).
+   *
+   * The registry is consulted first. A process launched at the picker — no
+   * path, no local athenaeum.toml — reports no active workspace, and the picker
+   * is shown. A process that opened a workspace, or one built without a
+   * registry at all, goes straight to the workspace surface, exactly as before.
+   */
   async function boot(): Promise<void> {
+    screen = "loading";
+    load = { kind: "loading" };
+
+    try {
+      registry = await listWorkspaces();
+    } catch {
+      // A process without a registry launcher (an embedder, or a test) simply
+      // has no picker. It always has a workspace, so fall through to it.
+      registry = null;
+    }
+
+    if (registry && !registry.active) {
+      screen = "picker";
+      return;
+    }
+    await bootWorkspace();
+  }
+
+  /** bootWorkspace loads everything scoped to the open workspace. */
+  async function bootWorkspace(): Promise<void> {
+    screen = "workspace";
     load = { kind: "loading" };
     try {
       const [info, docs] = await Promise.all([getWorkspace(), listDocuments()]);
@@ -174,6 +231,94 @@
               code: "NETWORK_UNAVAILABLE",
               message: "The Athenaeum process is not reachable from this page.",
             };
+    }
+  }
+
+  /**
+   * resetWorkspaceState discards everything belonging to the workspace being
+   * left.
+   *
+   * This is the frontend half of a total switch. The server has already
+   * unloaded the previous workspace's services; leaving its documents, tabs,
+   * recents, or unsaved buffers in the UI would let one workspace's content
+   * surface while another is open — exactly what ADR-0004 forbids. Every
+   * per-workspace store is cleared here.
+   */
+  function resetWorkspaceState(): void {
+    if (sessionTimer) {
+      clearTimeout(sessionTimer);
+      sessionTimer = null;
+    }
+    workspace = null;
+    documents = [];
+    activeId = null;
+    docError = null;
+    highlightLine = null;
+    quickOpenVisible = false;
+    openTabs = [];
+    loadedDocs = {};
+    tabView = {};
+    dirtyDocs = {};
+    recent = [];
+    closedTabs = [];
+    restoring = {};
+    diskVersions = {};
+    recoveryBuffers = [];
+    recoveryDismissed = false;
+    restored = null;
+    indexStatus = null;
+    expanded = new SvelteSet<string>();
+    layout = { navigation: true, context: true, search: false };
+    // Persisting is disabled until the next workspace has restored its own
+    // session, so an empty state cannot overwrite a real one.
+    sessionReady = false;
+    userActed = false;
+  }
+
+  /** chooseWorkspace opens a registry entry, unloading the current one first. */
+  async function chooseWorkspace(name: string): Promise<void> {
+    pickerBusy = true;
+    pickerError = null;
+    try {
+      await openWorkspace(name);
+      resetWorkspaceState();
+      // Reconnect the live streams to the new workspace.
+      workspaceGeneration += 1;
+      await bootWorkspace();
+    } catch (err) {
+      pickerError =
+        err instanceof ApiError
+          ? { code: err.code, message: err.message, remedy: err.details?.remedy }
+          : { code: "NETWORK_UNAVAILABLE", message: "The workspace could not be opened." };
+      // A failed open leaves the process where it was — at the picker — so
+      // refresh the list in case the failure changed what is available.
+      await refreshRegistry();
+    } finally {
+      pickerBusy = false;
+    }
+  }
+
+  /** backToPicker leaves the open workspace and returns to the registry. */
+  async function backToPicker(): Promise<void> {
+    if (!registry) return;
+    try {
+      await leaveWorkspace();
+    } catch {
+      // Even a failure to close cleanly should not trap the user in the
+      // workspace; the server treats a repeated leave as a no-op.
+    }
+    resetWorkspaceState();
+    workspaceGeneration += 1;
+    await refreshRegistry();
+    screen = "picker";
+  }
+
+  /** refreshRegistry re-reads the hand-edited registry file. */
+  async function refreshRegistry(): Promise<void> {
+    try {
+      registry = await listWorkspaces();
+    } catch {
+      // Keep the last known registry rather than blanking the picker.
     }
   }
 
@@ -366,6 +511,10 @@
    * polled needlessly.
    */
   $effect(() => {
+    // Re-run when the workspace changes, so the poller follows the switch.
+    void workspaceGeneration;
+    if (screen !== "workspace") return;
+
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -396,8 +545,13 @@
   });
 
   // Live change notifications. The stream is advisory: losing it costs
-  // freshness, never correctness.
+  // freshness, never correctness. It is scoped to the open workspace and
+  // reconnects on a switch, so it never carries one workspace's changes into
+  // another (ADR-0004).
   $effect(() => {
+    void workspaceGeneration;
+    if (screen !== "workspace") return;
+
     const unsubscribe = subscribeToChanges((changes) => {
       const next = { ...diskVersions };
       let treeStale = false;
@@ -421,6 +575,26 @@
 
 <svelte:window {onkeydown} />
 
+{#if screen === "picker" && registry}
+  <div class="shell picker-shell">
+    <header class="command-bar">
+      <div class="identity">
+        <span class="product">Athenaeum</span>
+        <span class="separator" aria-hidden="true">/</span>
+        <span class="workspace muted">select a workspace</span>
+      </div>
+    </header>
+    <div class="picker-body">
+      <WorkspacePicker
+        {registry}
+        busy={pickerBusy}
+        error={pickerError}
+        onopen={(name) => void chooseWorkspace(name)}
+        onreload={() => void refreshRegistry()}
+      />
+    </div>
+  </div>
+{:else}
 <div class="shell">
   <header class="command-bar">
     <div class="identity">
@@ -430,6 +604,14 @@
     </div>
 
     <div class="bar-actions">
+      {#if registry}
+        <!-- The way back to the picker (ADR-0004). Present only when a registry
+             launcher exists; a process launched with a bare path has nowhere to
+             return to. -->
+        <button type="button" class="quick-open-trigger" onclick={() => void backToPicker()}>
+          Workspaces
+        </button>
+      {/if}
       <button type="button" class="quick-open-trigger" onclick={() => (quickOpenVisible = true)}>
         Quick open <kbd>⌘P</kbd>
       </button>
@@ -578,6 +760,7 @@
 
   <StatusBar {workspace} document={activeDoc} state={load.kind} index={indexStatus} />
 </div>
+{/if}
 
 {#if quickOpenVisible}
   <QuickOpen

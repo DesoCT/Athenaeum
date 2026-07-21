@@ -197,3 +197,42 @@ export interface SessionState {
   recent?: string[];
   layout: SessionLayout;
 }
+
+/**
+ * One registered workspace as the picker sees it (ADR-0004).
+ *
+ * An unavailable entry carries its reason and remedy rather than being hidden,
+ * so a mistyped path is visible and fixable (R1). `path` is the one place the
+ * picker deliberately shows an absolute path: the user needs it to tell two
+ * similarly named workspaces apart.
+ */
+export interface WorkspaceEntry {
+  name: string;
+  path: string;
+  available: boolean;
+  code?: string;
+  reason?: string;
+  remedy?: string;
+  /** True for the entry the process currently has open. At most one is. */
+  active: boolean;
+}
+
+/** The workspace the process has open, or null at the picker. */
+export interface ActiveWorkspace {
+  name: string;
+  path: string;
+}
+
+/**
+ * The picker's whole view of the registry.
+ *
+ * This is a launcher, not a mount table: exactly one workspace is ever active,
+ * and nothing here loads two at once (ADR-0004, D-006, R1).
+ */
+export interface WorkspaceRegistry {
+  registry_path: string;
+  present: boolean;
+  active: ActiveWorkspace | null;
+  entries: WorkspaceEntry[];
+  diagnostics?: Diagnostic[];
+}
