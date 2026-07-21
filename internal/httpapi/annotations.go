@@ -237,6 +237,12 @@ func (s *Server) writeAnnotationError(w http.ResponseWriter, r *http.Request, er
 			"The document this annotation targets could not be read.")
 		return
 	}
+	var schemaErr *annotations.SchemaError
+	if errors.As(err, &schemaErr) {
+		s.writeError(w, r, http.StatusConflict, "ANNOTATION_SCHEMA_NEWER",
+			"These annotations were written by a newer version of Athenaeum. Update to edit them; nothing was changed.")
+		return
+	}
 	s.log.Error("annotation request failed", "error", err)
 	s.writeError(w, r, http.StatusInternalServerError, "ANNOTATION_FAILED",
 		"The annotation request could not be completed.")

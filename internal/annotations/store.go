@@ -86,6 +86,20 @@ func (e *UnavailableError) Error() string {
 	return e.Visibility + " annotations are unavailable in this session"
 }
 
+// SchemaError reports a sidecar written by a newer Athenaeum than this build
+// understands. Reading it as if it were the current schema and writing it back
+// would silently drop whatever the newer version added — a data-loss scenario
+// that spec 08 lists as a release blocker — so such a file is refused rather
+// than migrated in place (spec 03 section 3: migrations must be explicit).
+type SchemaError struct {
+	Found int
+	Known int
+}
+
+func (e *SchemaError) Error() string {
+	return fmt.Sprintf("annotation sidecar schema version %d is newer than this build understands (%d)", e.Found, e.Known)
+}
+
 // SourceError reports that the document an annotation targets could not be read
 // on creation. It is a client error — a bad or stale document id — not a
 // storage failure.
@@ -417,12 +431,16 @@ func (s *Service) conflict(visibility string, sc *Sidecar) error {
 	}
 }
 
-// readForList is read for the merge path: an unavailable store (no personal
-// directory this session) is an empty sidecar, not an error.
+// readForList is read for the merge path: a store that is unavailable this
+// session, or a sidecar from a newer Athenaeum, contributes nothing rather than
+// failing the whole read. A newer sidecar is skipped, never rewritten, so its
+// data is preserved even though this build cannot display it; a mutation would
+// still be refused by read (below), which is where the data-loss guard bites.
 func (s *Service) readForList(visibility, documentID string) (*Sidecar, error) {
 	sc, err := s.read(visibility, documentID)
 	var un *UnavailableError
-	if errors.As(err, &un) {
+	var se *SchemaError
+	if errors.As(err, &un) || errors.As(err, &se) {
 		return &Sidecar{SchemaVersion: SchemaVersion, DocumentID: documentID}, nil
 	}
 	return sc, err
@@ -449,6 +467,12 @@ func (s *Service) read(visibility, documentID string) (*Sidecar, error) {
 	sc.DocumentID = documentID
 	if sc.SchemaVersion == 0 {
 		sc.SchemaVersion = SchemaVersion
+	}
+	// A sidecar from a newer Athenaeum must never be rewritten by this one, or
+	// its added fields would be lost. Refuse it here, so neither a read nor a
+	// write can silently downgrade it.
+	if sc.SchemaVersion > SchemaVersion {
+		return nil, &SchemaError{Found: sc.SchemaVersion, Known: SchemaVersion}
 	}
 	return &sc, nil
 }
