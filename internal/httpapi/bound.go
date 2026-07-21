@@ -6,6 +6,7 @@ import (
 	"athenaeum/internal/annotations"
 	"athenaeum/internal/assets"
 	"athenaeum/internal/documents"
+	"athenaeum/internal/notes"
 	"athenaeum/internal/search"
 	"athenaeum/internal/session"
 	"athenaeum/internal/watcher"
@@ -56,6 +57,10 @@ type Bound struct {
 	// (R8). Nil disables the annotation routes; every other route still works,
 	// because annotations are sidecar context and never a prerequisite.
 	Annotations *annotations.Service
+	// Notes reads and writes free-standing note files (R9). Nil disables the
+	// note routes; like annotations, notes are never a prerequisite for the
+	// document routes.
+	Notes *notes.Service
 }
 
 // current returns the workspace bound right now, or nil when the picker is
@@ -115,6 +120,7 @@ func boundFromOptions(opts Options) *Bound {
 		Search:            opts.Search,
 		SessionState:      opts.SessionState,
 		Annotations:       opts.Annotations,
+		Notes:             opts.Notes,
 	}
 }
 

@@ -19,6 +19,7 @@ import type {
   AnnotationStatus,
   CreateAnnotationInput,
 } from "../annotations/types";
+import type { Note, NoteSummary, NoteLink, CreateNoteInput } from "../notes/types";
 
 const API_PREFIX = "/api/v1";
 
@@ -459,4 +460,69 @@ async function annotationWrite<T>(method: string, path: string, body: unknown): 
     throw new ApiError(response.status, await readError(response));
   }
   return (await response.json()) as T;
+}
+
+/**
+ * NoteConflictError is raised when a note changed on disk since it was last
+ * read (R9), carrying the current note so the editor can reconcile.
+ */
+export class NoteConflictError extends ApiError {
+  readonly current: Note | null;
+  constructor(body: ApiErrorBody, current: Note | null) {
+    super(409, body);
+    this.name = "NoteConflictError";
+    this.current = current;
+  }
+}
+
+export async function listNotes(): Promise<NoteSummary[]> {
+  const body = await request<{ notes: NoteSummary[] }>("/notes");
+  return body.notes ?? [];
+}
+
+export function getNote(visibility: string, id: string): Promise<Note> {
+  return request<Note>(`/notes/${encodeURIComponent(id)}?visibility=${encodeURIComponent(visibility)}`);
+}
+
+export async function createNote(input: CreateNoteInput): Promise<Note> {
+  const response = await fetch(`${API_PREFIX}/notes`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new ApiError(response.status, await readError(response));
+  return (await response.json()) as Note;
+}
+
+export async function updateNote(
+  id: string,
+  patch: {
+    visibility: string;
+    expected_version: string;
+    title?: string;
+    body?: string;
+    links?: NoteLink[];
+  },
+): Promise<Note> {
+  const response = await fetch(`${API_PREFIX}/notes/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (response.status === 409) {
+    const parsed = (await response.json()) as { error: ApiErrorBody; conflict: Note | null };
+    throw new NoteConflictError(parsed.error, parsed.conflict);
+  }
+  if (!response.ok) throw new ApiError(response.status, await readError(response));
+  return (await response.json()) as Note;
+}
+
+export async function deleteNote(visibility: string, id: string): Promise<void> {
+  const response = await fetch(
+    `${API_PREFIX}/notes/${encodeURIComponent(id)}?visibility=${encodeURIComponent(visibility)}`,
+    { method: "DELETE", credentials: "same-origin", headers: { Accept: "application/json" } },
+  );
+  if (!response.ok) throw new ApiError(response.status, await readError(response));
 }

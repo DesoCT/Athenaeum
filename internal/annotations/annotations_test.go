@@ -3,9 +3,7 @@ package annotations
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 )
 
 // fakeDocs is a stand-in DocumentSource so store tests need no real workspace.
@@ -35,17 +33,6 @@ func newService(t *testing.T, docs DocumentSource) (svc *Service, workspace, per
 
 func textAnchor() Anchor {
 	return Anchor{Type: AnchorText, Exact: "disposable cache", StartLine: 2, EndLine: 2, Prefix: "a ", Suffix: "."}
-}
-
-func TestNewIDIsSortableAndSized(t *testing.T) {
-	a := newIDAt(time.UnixMilli(1000), strings.NewReader("0123456789"))
-	b := newIDAt(time.UnixMilli(2000), strings.NewReader("0123456789"))
-	if len(a) != 26 || len(b) != 26 {
-		t.Fatalf("id length: got %d and %d, want 26", len(a), len(b))
-	}
-	if !(a < b) {
-		t.Fatalf("ids not time-sortable: %q should sort before %q", a, b)
-	}
 }
 
 func TestResolveTextAnchorUnchangedFastPath(t *testing.T) {

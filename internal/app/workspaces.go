@@ -12,6 +12,7 @@ import (
 	"athenaeum/internal/documents"
 	"athenaeum/internal/gitview"
 	"athenaeum/internal/httpapi"
+	"athenaeum/internal/notes"
 	"athenaeum/internal/registry"
 	"athenaeum/internal/search"
 	"athenaeum/internal/session"
@@ -254,6 +255,16 @@ func (c *controller) build(cfg *config.Config) (*loaded, error) {
 		PersonalDir: personalAnnotations,
 		SharedDir:   filepath.Join(cfg.AbsRoot, ".athenaeum", "shared", "annotations"),
 		Docs:        documentSource{docs: entry.bound.Documents},
+	})
+
+	// Notes (R9), the same personal/shared split as annotations.
+	personalNotes := ""
+	if dirsReady {
+		personalNotes = filepath.Join(dirs.Data, "notes")
+	}
+	entry.bound.Notes = notes.NewService(notes.Options{
+		PersonalDir: personalNotes,
+		SharedDir:   filepath.Join(cfg.AbsRoot, ".athenaeum", "shared", "notes"),
 	})
 
 	// The watcher is advisory: a failure costs live updates, never correctness,
