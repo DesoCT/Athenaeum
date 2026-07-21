@@ -14,6 +14,7 @@ import (
 	"athenaeum/internal/httpapi"
 	"athenaeum/internal/notes"
 	"athenaeum/internal/registry"
+	"athenaeum/internal/relationships"
 	"athenaeum/internal/search"
 	"athenaeum/internal/session"
 	"athenaeum/internal/watcher"
@@ -30,9 +31,10 @@ type loaded struct {
 	// cancel stops the goroutines scoped to this workspace: the Git adapter's
 	// refresh loop and the watcher-to-Git bridge. The watcher and the search
 	// service own their own shutdown and are closed explicitly.
-	cancel  context.CancelFunc
-	watcher *watcher.Watcher
-	search  *search.Service
+	cancel        context.CancelFunc
+	watcher       *watcher.Watcher
+	search        *search.Service
+	relationships *relationships.Service
 	// documentCount and pendingRecovery feed the launch banner.
 	documentCount   int
 	pendingRecovery int
@@ -267,6 +269,18 @@ func (c *controller) build(cfg *config.Config) (*loaded, error) {
 		SharedDir:   filepath.Join(cfg.AbsRoot, ".athenaeum", "shared", "notes"),
 	})
 
+	// Relationships (R10): outgoing links and backlinks as a projection over the
+	// corpus. Like search, it is disposable and rebuilt lazily; it follows the
+	// watcher so backlinks stay current after edits.
+	entry.relationships = relationships.NewService(relationships.Options{
+		Workspace:   ws,
+		Documents:   entry.bound.Documents,
+		WikiLinks:   cfg.Documents.WikiLinks,
+		Fields:      cfg.Relationships.FrontMatter.Fields,
+		SidecarPath: filepath.Join(cfg.AbsRoot, ".athenaeum", "shared", "relationships.json"),
+	})
+	entry.bound.Relationships = entry.relationships
+
 	// The watcher is advisory: a failure costs live updates, never correctness,
 	// so it must not stop a workspace opening (spec 02 section 3.4).
 	if w, err := watcher.New(ws, c.opts.Logger); err != nil {
@@ -281,6 +295,10 @@ func (c *controller) build(cfg *config.Config) (*loaded, error) {
 	var gitAdapter *gitview.Adapter
 	if cfg.Git.Enabled {
 		gitAdapter = gitview.New(cfg.AbsRoot, c.opts.Logger)
+		// The panel reads status, diff, history, and blame through this adapter
+		// (R12). It is the same instance the search filter and the watcher bridge
+		// use, so there is one status snapshot per workspace.
+		entry.bound.Git = gitAdapter
 	}
 
 	// The disposable FTS projection (R7, D-014). It lives under the OS cache
@@ -323,6 +341,11 @@ func (c *controller) build(cfg *config.Config) (*loaded, error) {
 	// must stay responsive regardless of corpus size (requirements N1 and N2).
 	if entry.search != nil {
 		entry.search.Start(ctx)
+	}
+	// The relationship projection follows the watcher so backlinks stay current;
+	// its rebuild is lazy, so this only marks the projection stale on a change.
+	if entry.relationships != nil && entry.watcher != nil {
+		go entry.relationships.Follow(ctx, entry.watcher)
 	}
 
 	return entry, nil

@@ -6,7 +6,9 @@ import (
 	"athenaeum/internal/annotations"
 	"athenaeum/internal/assets"
 	"athenaeum/internal/documents"
+	"athenaeum/internal/gitview"
 	"athenaeum/internal/notes"
+	"athenaeum/internal/relationships"
 	"athenaeum/internal/search"
 	"athenaeum/internal/session"
 	"athenaeum/internal/watcher"
@@ -61,6 +63,13 @@ type Bound struct {
 	// note routes; like annotations, notes are never a prerequisite for the
 	// document routes.
 	Notes *notes.Service
+	// Relationships computes outgoing links and backlinks as a projection over
+	// the corpus (R10). Nil disables the relationship route.
+	Relationships *relationships.Service
+	// Git provides read-only repository context (R12). Nil, or an adapter that
+	// reports itself unavailable, means the Git panel explains its absence
+	// rather than failing (acceptance J4).
+	Git *gitview.Adapter
 }
 
 // current returns the workspace bound right now, or nil when the picker is
@@ -121,6 +130,8 @@ func boundFromOptions(opts Options) *Bound {
 		SessionState:      opts.SessionState,
 		Annotations:       opts.Annotations,
 		Notes:             opts.Notes,
+		Relationships:     opts.Relationships,
+		Git:               opts.Git,
 	}
 }
 

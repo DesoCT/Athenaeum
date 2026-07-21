@@ -93,6 +93,19 @@ func (s *Server) handleAnnotationList(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) handleAnnotationOverview(w http.ResponseWriter, r *http.Request) {
+	svc := s.annotationService(w, r)
+	if svc == nil {
+		return
+	}
+	overview, err := svc.Overview()
+	if err != nil {
+		s.writeAnnotationError(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, overview)
+}
+
 func (s *Server) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) {
 	svc := s.annotationService(w, r)
 	if svc == nil {
@@ -222,6 +235,12 @@ func (s *Server) writeAnnotationError(w http.ResponseWriter, r *http.Request, er
 	if errors.As(err, &sourceErr) {
 		s.writeError(w, r, http.StatusBadRequest, "ANNOTATION_TARGET_UNREADABLE",
 			"The document this annotation targets could not be read.")
+		return
+	}
+	var schemaErr *annotations.SchemaError
+	if errors.As(err, &schemaErr) {
+		s.writeError(w, r, http.StatusConflict, "ANNOTATION_SCHEMA_NEWER",
+			"These annotations were written by a newer version of Athenaeum. Update to edit them; nothing was changed.")
 		return
 	}
 	s.log.Error("annotation request failed", "error", err)

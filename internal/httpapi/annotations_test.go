@@ -194,6 +194,33 @@ func TestAnnotationUpdateAndDelete(t *testing.T) {
 	}
 }
 
+func TestAnnotationOverview(t *testing.T) {
+	srv, cookie, _ := liveServerWithAnnotations(t, map[string]string{
+		"docs/a.md": "# Title\nThe index is a disposable cache.\n",
+	})
+	// One open comment and one pin.
+	annReq(t, srv, cookie, http.MethodPost, APIPrefix+"/annotations", annotationCreateRequest{
+		DocumentID: "docs/a.md", Kind: annotations.KindComment, Visibility: annotations.VisibilityShared,
+		Body: "open item", Anchor: textAnchorFor(),
+	})
+	annReq(t, srv, cookie, http.MethodPost, APIPrefix+"/annotations", annotationCreateRequest{
+		DocumentID: "docs/a.md", Kind: annotations.KindPin, Visibility: annotations.VisibilityPersonal,
+		Anchor: annotations.Anchor{Type: annotations.AnchorDocument},
+	})
+
+	w := annReq(t, srv, cookie, http.MethodGet, APIPrefix+"/annotations/overview", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("overview status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	}
+	var ov annotations.Overview
+	if err := json.Unmarshal(w.Body.Bytes(), &ov); err != nil {
+		t.Fatalf("decode overview: %v", err)
+	}
+	if len(ov.Pins) != 1 || len(ov.Unresolved) != 1 {
+		t.Fatalf("overview = %+v, want 1 pin and 1 unresolved", ov)
+	}
+}
+
 func TestAnnotationRequiresSession(t *testing.T) {
 	srv, _, _ := liveServerWithAnnotations(t, map[string]string{"docs/a.md": "# Title\n"})
 	// No cookie: the guard must reject before any handler runs.

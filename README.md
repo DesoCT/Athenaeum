@@ -8,10 +8,14 @@ Athenaeum is not a chat product, a memory system, a semantic knowledge graph, a
 collaboration service, a cloud service, a WYSIWYG editor, or a Git client. It is
 useful with no language model, no API key, and no internet connection.
 
-**Status:** v0.1 in development. Phases 0 to 3 are complete: the repository
+**Status:** v0.1 in development. Phases 0 to 5 are complete: the repository
 foundation, workspace loading and the read-only Map Room, editing with atomic
-saves and crash recovery, and workspace search with session restoration.
-Annotations, notes, relationships, and the Git panel follow in later phases.
+saves and crash recovery, workspace search with session restoration, the
+annotation layer — anchored comments and pins with repair, personal and shared
+notes, explicit relationships with backlinks, and Map Room summaries — and the
+read-only Git panel: status, working-tree diff, history, and blame, through an
+enforced allow-list that can reach no mutating command. Remote-mode hardening
+and release packaging (Phase 6) remain.
 
 Measured startup, responsiveness, and scale numbers are in
 [docs/measurements.md](docs/measurements.md).

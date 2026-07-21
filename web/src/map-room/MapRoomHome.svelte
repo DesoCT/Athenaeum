@@ -1,15 +1,61 @@
 <script lang="ts">
   import type { DocumentSummary, WorkspaceInfo } from "../api/types";
+  import type { AnnotationOverview } from "../annotations/types";
+  import type { GitFile } from "../git/types";
+  import { getAnnotationOverview, getGitStatus, ApiError } from "../api/client";
 
   interface Props {
     workspace: WorkspaceInfo;
     documents: DocumentSummary[];
-    onopen: (id: string) => void;
+    onopen: (id: string, line?: number) => void;
     /** Recently opened document IDs, most recent first (R2, R13). */
     recent?: string[];
+    /** Bumped by the shell to refresh the annotation summary. */
+    generation?: number;
   }
 
-  let { workspace, documents, onopen, recent = [] }: Props = $props();
+  let { workspace, documents, onopen, recent = [], generation = 0 }: Props = $props();
+
+  let overview = $state<AnnotationOverview | null>(null);
+
+  // The pin and unresolved summaries (spec 04 section 3). A failure leaves them
+  // absent rather than showing an error on the home screen; they are context,
+  // never a prerequisite for the Map Room.
+  $effect(() => {
+    void generation;
+    getAnnotationOverview()
+      .then((o) => (overview = o))
+      .catch((err) => {
+        if (!(err instanceof ApiError)) return;
+        overview = null;
+      });
+  });
+
+  const pins = $derived(overview?.pins ?? []);
+  const unresolved = $derived(overview?.unresolved ?? []);
+
+  // Changed files from Git status (spec 04 section 3). Absent when Git is off,
+  // never an error on the home.
+  let changed = $state<GitFile[]>([]);
+  $effect(() => {
+    void generation;
+    if (!workspace.capabilities.git) {
+      changed = [];
+      return;
+    }
+    getGitStatus()
+      .then((s) => (changed = s.files.filter((f) => f.state !== "clean")))
+      .catch(() => (changed = []));
+  });
+
+  function titleOf(id: string): string {
+    return documents.find((d) => d.id === id)?.title ?? id;
+  }
+
+  function summarise(body: string): string {
+    const trimmed = body.trim().replace(/\s+/g, " ");
+    return trimmed.length > 80 ? `${trimmed.slice(0, 77)}…` : trimmed;
+  }
 
   // Recents are resolved against the live document list, so an entry for a
   // document that has since been removed or excluded simply does not appear.
@@ -65,6 +111,54 @@
     </section>
   {/if}
 
+  {#if pins.length > 0}
+    <section class="card" aria-labelledby="pins-heading">
+      <h2 id="pins-heading">Pinned</h2>
+      <ul class="documents">
+        {#each pins as pin (pin.id)}
+          <li>
+            <button type="button" onclick={() => onopen(pin.document_id, pin.line)}>
+              <span class="title">{pin.body ? summarise(pin.body) : titleOf(pin.document_id)}</span>
+              <span class="path">{pin.document_id}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
+  {#if unresolved.length > 0}
+    <section class="card" aria-labelledby="unresolved-heading">
+      <h2 id="unresolved-heading">Unresolved ({unresolved.length})</h2>
+      <ul class="documents">
+        {#each unresolved as item (item.id)}
+          <li>
+            <button type="button" onclick={() => onopen(item.document_id, item.line)}>
+              <span class="title">{summarise(item.body)}</span>
+              <span class="path">{titleOf(item.document_id)}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
+  {#if changed.length > 0}
+    <section class="card" aria-labelledby="changed-heading">
+      <h2 id="changed-heading">Changed</h2>
+      <ul class="documents">
+        {#each changed as file (file.document_id)}
+          <li>
+            <button type="button" onclick={() => onopen(file.document_id)}>
+              <span class="title">{titleOf(file.document_id)}</span>
+              <span class="git-state {file.state}">{file.state}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
   {#if recentDocuments.length > 0}
     <section class="card" aria-labelledby="recent-heading">
       <h2 id="recent-heading">Recent</h2>
@@ -100,18 +194,6 @@
     {/if}
   {/each}
 
-  <section class="card next">
-    <h2>Not yet built</h2>
-    <p>
-      Pinned documents, changed files, and unresolved annotations appear here as
-      later phases land. They are listed as absent rather than shown as empty,
-      so the Map Room never implies data it does not have.
-    </p>
-    <ul>
-      <li><strong>Phase 4</strong> — annotations, notes, backlinks</li>
-      <li><strong>Phase 5</strong> — read-only Git context</li>
-    </ul>
-  </section>
 </div>
 
 <style>
@@ -209,6 +291,22 @@
     color: var(--text-muted);
   }
 
+  .git-state {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+
+  .git-state.modified {
+    color: var(--warn);
+  }
+
+  .git-state.untracked {
+    color: var(--accent);
+  }
+
   .diagnostic {
     padding: 0.5rem 0.75rem;
     border-left: 2px solid var(--warn);
@@ -236,18 +334,5 @@
     margin: 0.15rem 0 0;
     font-size: 0.8rem;
     color: var(--text-muted);
-  }
-
-  .next p {
-    margin: 0 0 0.75rem;
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-  }
-
-  .next ul {
-    margin: 0;
-    padding-left: 1.1rem;
-    color: var(--text-muted);
-    font-size: 0.85rem;
   }
 </style>

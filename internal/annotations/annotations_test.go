@@ -234,6 +234,89 @@ func TestUpdateResolveAndDelete(t *testing.T) {
 	}
 }
 
+func TestOverviewCollectsPinsAndUnresolved(t *testing.T) {
+	docs := fakeDocs{content: "# Title\nThe index is a disposable cache.\n"}
+	svc, _, _ := newService(t, docs)
+
+	// An open comment (unresolved), a pin, and a resolved comment (neither).
+	mustCreate(t, svc, VisibilityShared, "still open")
+	if _, _, err := svc.Create(CreateRequest{
+		DocumentID: "docs/architecture.md", Kind: KindPin, Visibility: VisibilityPersonal,
+		Anchor: Anchor{Type: AnchorDocument},
+	}); err != nil {
+		t.Fatalf("create pin: %v", err)
+	}
+	resolved, rev, err := svc.Create(CreateRequest{
+		DocumentID: "docs/architecture.md", Kind: KindComment, Visibility: VisibilityShared,
+		Body: "done", Anchor: textAnchor(), ExpectedRevision: 1,
+	})
+	if err != nil {
+		t.Fatalf("create resolved: %v", err)
+	}
+	done := StatusResolved
+	if _, _, err := svc.Update(UpdateRequest{
+		DocumentID: "docs/architecture.md", Visibility: VisibilityShared, ID: resolved.ID,
+		Status: &done, ExpectedRevision: rev,
+	}); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	ov, err := svc.Overview()
+	if err != nil {
+		t.Fatalf("Overview: %v", err)
+	}
+	if len(ov.Pins) != 1 || ov.Pins[0].DocumentID != "docs/architecture.md" {
+		t.Fatalf("pins = %+v, want one on docs/architecture.md", ov.Pins)
+	}
+	if len(ov.Unresolved) != 1 || ov.Unresolved[0].Body != "still open" {
+		t.Fatalf("unresolved = %+v, want the single open comment", ov.Unresolved)
+	}
+}
+
+// TestNewerSchemaIsRefusedNotClobbered is the Phase 6 data-loss guard: a sidecar
+// from a newer Athenaeum is never rewritten (which would drop its added fields),
+// and a mutation against it is refused.
+func TestNewerSchemaIsRefusedNotClobbered(t *testing.T) {
+	docs := fakeDocs{content: "# Title\nThe index is a disposable cache.\n"}
+	svc, workspace, _ := newService(t, docs)
+
+	// Hand-write a shared sidecar claiming a future schema, with an unknown field.
+	future := filepath.Join(workspace, ".athenaeum", "shared", "annotations", "docs", "architecture.md.json")
+	if err := os.MkdirAll(filepath.Dir(future), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	original := `{"schema_version":999,"document_id":"docs/architecture.md","revision":4,` +
+		`"annotations":[{"id":"01FUTURE","kind":"comment","visibility":"shared","status":"open",` +
+		`"body":"from the future","future_field":"keep me","anchor":{"type":"document"}}]}`
+	if err := os.WriteFile(future, []byte(original), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// List tolerates it (skips the newer file) rather than failing outright.
+	list, err := svc.List("docs/architecture.md")
+	if err != nil {
+		t.Fatalf("List over a newer sidecar: %v", err)
+	}
+	if len(list.Annotations) != 0 {
+		t.Fatalf("a newer sidecar was displayed: %+v", list.Annotations)
+	}
+
+	// A create against it is refused with a SchemaError, and the file is
+	// byte-for-byte unchanged — the unknown field survives.
+	_, _, err = svc.Create(CreateRequest{
+		DocumentID: "docs/architecture.md", Kind: KindComment, Visibility: VisibilityShared,
+		Body: "mine", Anchor: textAnchor(),
+	})
+	var se *SchemaError
+	if !asType(err, &se) {
+		t.Fatalf("create error = %v, want *SchemaError", err)
+	}
+	after, _ := os.ReadFile(future)
+	if string(after) != original {
+		t.Fatalf("the newer sidecar was rewritten:\n got: %s\nwant: %s", after, original)
+	}
+}
+
 func TestPersonalUnavailableIsExplicit(t *testing.T) {
 	docs := fakeDocs{content: "body"}
 	svc := NewService(Options{SharedDir: t.TempDir(), Docs: docs}) // no personal dir

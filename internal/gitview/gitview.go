@@ -288,9 +288,15 @@ func (a *Adapter) record(states map[string]string, repoPath, state string) {
 // Spec 02 section 3.10 and D-019 restrict v0.1 to read-only operations. The
 // list is enforced rather than documented so a future edit cannot widen it by
 // accident: `run` rejects anything absent from it.
+// Every entry is read-only. Spec 02 section 3.10 restricts v0.1 to inspection,
+// and acceptance J3 proves it: a test asserts no mutating subcommand is present,
+// and run rejects anything absent here, so no write can be reached.
 var allowed = map[string]bool{
 	"rev-parse": true,
 	"status":    true,
+	"diff":      true,
+	"log":       true,
+	"blame":     true,
 }
 
 // run executes one allow-listed Git command.

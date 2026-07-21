@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -84,6 +86,20 @@ func (e *UnavailableError) Error() string {
 	return e.Visibility + " annotations are unavailable in this session"
 }
 
+// SchemaError reports a sidecar written by a newer Athenaeum than this build
+// understands. Reading it as if it were the current schema and writing it back
+// would silently drop whatever the newer version added — a data-loss scenario
+// that spec 08 lists as a release blocker — so such a file is refused rather
+// than migrated in place (spec 03 section 3: migrations must be explicit).
+type SchemaError struct {
+	Found int
+	Known int
+}
+
+func (e *SchemaError) Error() string {
+	return fmt.Sprintf("annotation sidecar schema version %d is newer than this build understands (%d)", e.Found, e.Known)
+}
+
 // SourceError reports that the document an annotation targets could not be read
 // on creation. It is a client error — a bad or stale document id — not a
 // storage failure.
@@ -91,6 +107,108 @@ type SourceError struct{ Err error }
 
 func (e *SourceError) Error() string { return "target document unreadable: " + e.Err.Error() }
 func (e *SourceError) Unwrap() error { return e.Err }
+
+// Ref is a lightweight pointer to an annotation for the Map Room home, without
+// the full anchor selector.
+type Ref struct {
+	ID         string `json:"id"`
+	DocumentID string `json:"document_id"`
+	Visibility string `json:"visibility"`
+	Kind       string `json:"kind"`
+	Status     string `json:"status"`
+	Body       string `json:"body"`
+	// Line is the stored anchor line, a hint for opening the document. Zero for
+	// a document-level anchor.
+	Line int `json:"line,omitempty"`
+}
+
+// Overview summarises annotations across the whole workspace for the Map Room
+// home (spec 04 section 3): pinned documents and unresolved comments.
+type Overview struct {
+	Pins       []Ref `json:"pins"`
+	Unresolved []Ref `json:"unresolved"`
+}
+
+// Overview walks both annotation stores and collects pins (bookmarks) and
+// unresolved comments across every document. It reads sidecars directly rather
+// than repairing anchors: the home only needs to point at a document, and a
+// full corpus repair would be far more work than the summary warrants.
+func (s *Service) Overview() (*Overview, error) {
+	ov := &Overview{Pins: []Ref{}, Unresolved: []Ref{}}
+	for _, store := range []struct{ dir, visibility string }{
+		{s.personalDir, VisibilityPersonal},
+		{s.sharedDir, VisibilityShared},
+	} {
+		if store.dir == "" {
+			continue
+		}
+		if err := collect(store.dir, store.visibility, ov); err != nil {
+			return nil, err
+		}
+	}
+	sortRefsByID(ov.Pins)
+	sortRefsByID(ov.Unresolved)
+	return ov, nil
+}
+
+// collect walks one annotation store, adding pins and unresolved comments to ov.
+func collect(dir, visibility string, ov *Overview) error {
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil // an absent store is empty, not an error
+			}
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".json") {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return nil
+		}
+		documentID := filepath.ToSlash(strings.TrimSuffix(rel, ".json"))
+
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil // a sidecar that cannot be read is skipped, never fatal
+		}
+		var sc Sidecar
+		if err := json.Unmarshal(data, &sc); err != nil {
+			return nil
+		}
+		for _, a := range sc.Annotations {
+			ref := Ref{
+				ID: a.ID, DocumentID: documentID, Visibility: visibility,
+				Kind: a.Kind, Status: a.Status, Body: a.Body, Line: a.Anchor.StartLine,
+			}
+			if a.Kind == KindPin {
+				ov.Pins = append(ov.Pins, ref)
+			}
+			if a.Status == StatusOpen && a.Kind == KindComment {
+				ov.Unresolved = append(ov.Unresolved, ref)
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+// sortRefsByID orders refs chronologically by their sortable ULID.
+func sortRefsByID(refs []Ref) {
+	slices.SortFunc(refs, func(a, b Ref) int {
+		if a.ID < b.ID {
+			return -1
+		}
+		if a.ID > b.ID {
+			return 1
+		}
+		return 0
+	})
+}
 
 // ListResult is every annotation for one document, from both sidecars, with
 // each anchor's live state resolved.
@@ -313,12 +431,16 @@ func (s *Service) conflict(visibility string, sc *Sidecar) error {
 	}
 }
 
-// readForList is read for the merge path: an unavailable store (no personal
-// directory this session) is an empty sidecar, not an error.
+// readForList is read for the merge path: a store that is unavailable this
+// session, or a sidecar from a newer Athenaeum, contributes nothing rather than
+// failing the whole read. A newer sidecar is skipped, never rewritten, so its
+// data is preserved even though this build cannot display it; a mutation would
+// still be refused by read (below), which is where the data-loss guard bites.
 func (s *Service) readForList(visibility, documentID string) (*Sidecar, error) {
 	sc, err := s.read(visibility, documentID)
 	var un *UnavailableError
-	if errors.As(err, &un) {
+	var se *SchemaError
+	if errors.As(err, &un) || errors.As(err, &se) {
 		return &Sidecar{SchemaVersion: SchemaVersion, DocumentID: documentID}, nil
 	}
 	return sc, err
@@ -345,6 +467,12 @@ func (s *Service) read(visibility, documentID string) (*Sidecar, error) {
 	sc.DocumentID = documentID
 	if sc.SchemaVersion == 0 {
 		sc.SchemaVersion = SchemaVersion
+	}
+	// A sidecar from a newer Athenaeum must never be rewritten by this one, or
+	// its added fields would be lost. Refuse it here, so neither a read nor a
+	// write can silently downgrade it.
+	if sc.SchemaVersion > SchemaVersion {
+		return nil, &SchemaError{Found: sc.SchemaVersion, Known: SchemaVersion}
 	}
 	return &sc, nil
 }
