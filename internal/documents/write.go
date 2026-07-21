@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"unicode/utf8"
 
+	"athenaeum/internal/atomicfs"
 	"athenaeum/internal/security"
 )
 
@@ -192,96 +192,31 @@ func encode(content, lineEnding string, keepBOM bool) []byte {
 	return out
 }
 
-// atomicWrite performs steps 2 to 8 of spec 03 section 8.
+// atomicWrite performs steps 2 to 8 of spec 03 section 8, delegating the
+// mechanism to internal/atomicfs and mapping its failure kinds to the document
+// write vocabulary so callers keep their stable codes (N6). The shared helper
+// exists so sidecar writers use the same policy rather than a divergent copy.
 func atomicWrite(target string, payload []byte) error {
-	dir := filepath.Dir(target)
-
-	// Preserve the original mode where practical (R5 step 1). A file that does
-	// not exist yet takes a conservative default.
-	mode := os.FileMode(0o644)
-	if info, err := os.Stat(target); err == nil {
-		mode = info.Mode().Perm()
-	} else if !os.IsNotExist(err) {
-		return &WriteError{Code: CodeWriteFailed, Message: "The target could not be inspected.", Err: err}
+	err := atomicfs.Write(target, payload)
+	if err == nil {
+		return nil
 	}
-
-	// Step 2: a temporary file in the same directory, therefore the same
-	// filesystem, so the rename in step 7 is atomic rather than a copy.
-	temp, err := os.CreateTemp(dir, ".athenaeum-*.tmp")
-	if err != nil {
-		return &WriteError{
-			Code:    CodeWriteFailed,
-			Message: "A temporary file could not be created beside the document.",
-			Err:     err,
+	var ae *atomicfs.Error
+	if errors.As(err, &ae) {
+		switch ae.Kind {
+		case atomicfs.KindNotAtomic:
+			return &WriteError{
+				Code:    CodeNotAtomic,
+				Message: "The document could not be replaced atomically, so it was left unchanged.",
+				Err:     ae.Err,
+			}
+		case atomicfs.KindVerifyFailed:
+			return &WriteError{
+				Code:    CodeVerifyFailed,
+				Message: "The document was written but could not be verified on disk.",
+				Err:     ae.Err,
+			}
 		}
 	}
-	tempName := temp.Name()
-
-	// Any failure from here on must leave the original untouched and remove the
-	// temporary file.
-	cleanup := func() {
-		temp.Close()
-		os.Remove(tempName)
-	}
-
-	// Step 3: copy relevant mode bits.
-	if err := temp.Chmod(mode); err != nil {
-		// Not fatal on filesystems without permission support; the rename still
-		// produces a correct file, it just may not carry the original mode.
-		_ = err
-	}
-
-	// Step 4: write the complete content.
-	if _, err := temp.Write(payload); err != nil {
-		cleanup()
-		return &WriteError{Code: CodeWriteFailed, Message: "The document could not be written.", Err: err}
-	}
-
-	// Step 5: flush to disk before the rename, so a crash cannot leave the
-	// target pointing at a file whose contents were never persisted.
-	if err := temp.Sync(); err != nil {
-		cleanup()
-		return &WriteError{Code: CodeWriteFailed, Message: "The document could not be flushed to disk.", Err: err}
-	}
-	if err := temp.Close(); err != nil {
-		os.Remove(tempName)
-		return &WriteError{Code: CodeWriteFailed, Message: "The temporary file could not be closed.", Err: err}
-	}
-
-	// Step 7: atomic replace.
-	if err := os.Rename(tempName, target); err != nil {
-		os.Remove(tempName)
-		// Spec 03 section 8: if atomic replace is unavailable, fail rather than
-		// degrade silently to a truncate-and-write.
-		return &WriteError{
-			Code:    CodeNotAtomic,
-			Message: "The document could not be replaced atomically, so it was left unchanged.",
-			Err:     err,
-		}
-	}
-
-	// Step 6, applied after the rename: fsync the directory so the rename
-	// itself is durable. Not supported everywhere, so a failure is tolerated.
-	if handle, err := os.Open(dir); err == nil {
-		_ = handle.Sync()
-		handle.Close()
-	}
-
-	// Step 8: verify the bytes that actually landed.
-	written, err := os.ReadFile(target)
-	if err != nil {
-		return &WriteError{
-			Code:    CodeVerifyFailed,
-			Message: "The document was written but could not be read back for verification.",
-			Err:     err,
-		}
-	}
-	if !bytes.Equal(written, payload) {
-		return &WriteError{
-			Code:    CodeVerifyFailed,
-			Message: "The document on disk does not match what was written.",
-		}
-	}
-
-	return nil
+	return &WriteError{Code: CodeWriteFailed, Message: "The document could not be written.", Err: err}
 }

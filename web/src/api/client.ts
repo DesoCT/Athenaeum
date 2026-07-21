@@ -13,6 +13,12 @@ import type {
   WorkspaceInfo,
   WorkspaceRegistry,
 } from "./types";
+import type {
+  Annotation,
+  AnnotationList,
+  AnnotationStatus,
+  CreateAnnotationInput,
+} from "../annotations/types";
 
 const API_PREFIX = "/api/v1";
 
@@ -375,4 +381,82 @@ export async function saveDocument(id: string, options: SaveOptions): Promise<Sa
     throw new ApiError(response.status, await readError(response));
   }
   return (await response.json()) as SaveResult;
+}
+
+/**
+ * AnnotationConflictError is raised when a sidecar changed since it was last
+ * read (R8). It carries the current revision and annotations so the caller can
+ * reconcile without a second request that could race again, mirroring the
+ * document conflict path.
+ */
+export class AnnotationConflictError extends ApiError {
+  readonly visibility: string;
+  readonly currentRevision: number;
+  readonly current: Annotation[];
+
+  constructor(body: ApiErrorBody, conflict: AnnotationConflict) {
+    super(409, body);
+    this.name = "AnnotationConflictError";
+    this.visibility = conflict.visibility;
+    this.currentRevision = conflict.current_revision;
+    this.current = conflict.current;
+  }
+}
+
+interface AnnotationConflict {
+  visibility: string;
+  current_revision: number;
+  current: Annotation[];
+}
+
+interface AnnotationResult {
+  annotation: Annotation;
+  revision: number;
+}
+
+/** listAnnotations reads the merged personal and shared annotations (R8). */
+export function listAnnotations(documentId: string): Promise<AnnotationList> {
+  return request<AnnotationList>(`/annotations?document=${encodePath(documentId)}`);
+}
+
+export async function createAnnotation(input: CreateAnnotationInput): Promise<AnnotationResult> {
+  return annotationWrite("POST", "/annotations", input);
+}
+
+export async function updateAnnotation(
+  id: string,
+  patch: {
+    document_id: string;
+    visibility: string;
+    expected_revision: number;
+    body?: string;
+    status?: AnnotationStatus;
+  },
+): Promise<AnnotationResult> {
+  return annotationWrite("PATCH", `/annotations/${encodeURIComponent(id)}`, patch);
+}
+
+export async function deleteAnnotation(
+  id: string,
+  patch: { document_id: string; visibility: string; expected_revision: number },
+): Promise<{ revision: number }> {
+  return annotationWrite("DELETE", `/annotations/${encodeURIComponent(id)}`, patch);
+}
+
+/** annotationWrite performs a mutating annotation request, surfacing conflicts. */
+async function annotationWrite<T>(method: string, path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_PREFIX}${path}`, {
+    method,
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (response.status === 409) {
+    const parsed = (await response.json()) as { error: ApiErrorBody; conflict: AnnotationConflict };
+    throw new AnnotationConflictError(parsed.error, parsed.conflict);
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, await readError(response));
+  }
+  return (await response.json()) as T;
 }

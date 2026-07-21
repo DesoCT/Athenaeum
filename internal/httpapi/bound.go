@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 
+	"athenaeum/internal/annotations"
 	"athenaeum/internal/assets"
 	"athenaeum/internal/documents"
 	"athenaeum/internal/search"
@@ -51,6 +52,10 @@ type Bound struct {
 	Search *search.Service
 	// SessionState persists open tabs and layout (R13).
 	SessionState *session.StateStore
+	// Annotations reads and writes the personal and shared annotation sidecars
+	// (R8). Nil disables the annotation routes; every other route still works,
+	// because annotations are sidecar context and never a prerequisite.
+	Annotations *annotations.Service
 }
 
 // current returns the workspace bound right now, or nil when the picker is
@@ -109,6 +114,7 @@ func boundFromOptions(opts Options) *Bound {
 		Watcher:           opts.Watcher,
 		Search:            opts.Search,
 		SessionState:      opts.SessionState,
+		Annotations:       opts.Annotations,
 	}
 }
 

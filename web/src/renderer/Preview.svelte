@@ -15,6 +15,12 @@
     restoreScroll?: number | null;
     /** Reports the scroll fraction so the session can record it (R13). */
     onscrollfraction?: (fraction: number) => void;
+    /**
+     * Reports the rendered article element after each render, so an overlay
+     * such as the annotation layer can query its [data-line] blocks and observe
+     * selections without owning the DOM (R8).
+     */
+    onrendered?: (root: HTMLElement) => void;
   }
 
   let {
@@ -23,6 +29,7 @@
     highlightLine = null,
     restoreScroll = null,
     onscrollfraction,
+    onrendered,
   }: Props = $props();
 
   /** How long a search hit stays highlighted. */
@@ -64,6 +71,15 @@
 
   $effect(() => {
     headingWarnings = rendered.headingWarnings;
+  });
+
+  // Hand the freshly rendered article to any overlay. Reading `rendered` ties
+  // this to each re-render, so an overlay recomputes its geometry when the
+  // document changes.
+  $effect(() => {
+    const root = container;
+    void rendered;
+    if (root && onrendered) onrendered(root);
   });
 
   $effect(() => {
@@ -361,6 +377,14 @@
   .preview :global(ul.contains-task-list) {
     padding-left: 1.2rem;
     list-style: none;
+  }
+
+  /* A block carrying one or more annotations (R8). A restrained left marker,
+     so annotated passages are visible without fighting the prose. */
+  .preview :global([data-annotated]) {
+    box-shadow: -0.6rem 0 0 -0.35rem #d9a441;
+    background: color-mix(in srgb, #f2c14e 12%, transparent);
+    border-radius: 2px;
   }
 
   /* A temporarily highlighted search hit (spec 04 section 8). */
