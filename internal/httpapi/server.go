@@ -15,6 +15,7 @@ import (
 	"athenaeum/internal/assets"
 	"athenaeum/internal/documents"
 	"athenaeum/internal/notes"
+	"athenaeum/internal/relationships"
 	"athenaeum/internal/search"
 	"athenaeum/internal/security"
 	"athenaeum/internal/session"
@@ -69,6 +70,9 @@ type Options struct {
 	// Notes reads and writes free-standing note files (R9). Nil disables the
 	// note routes.
 	Notes *notes.Service
+	// Relationships computes outgoing links and backlinks (R10). Nil disables
+	// the relationship route.
+	Relationships *relationships.Service
 
 	// Workspaces lists the registry and changes which workspace is open. Nil
 	// disables the picker routes entirely, which is what every existing test
@@ -138,6 +142,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET "+APIPrefix+"/notes/{id}", s.guard(http.HandlerFunc(s.handleNoteRead)))
 	s.mux.Handle("PUT "+APIPrefix+"/notes/{id}", s.guard(http.HandlerFunc(s.handleNoteUpdate)))
 	s.mux.Handle("DELETE "+APIPrefix+"/notes/{id}", s.guard(http.HandlerFunc(s.handleNoteDelete)))
+	s.mux.Handle("GET "+APIPrefix+"/relationships/{id...}", s.guard(http.HandlerFunc(s.handleRelationships)))
 	s.mux.Handle("/", s.guard(http.HandlerFunc(s.handleFrontend)))
 }
 

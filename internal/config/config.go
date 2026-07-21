@@ -12,8 +12,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -32,13 +30,14 @@ type Config struct {
 	Include       []string `toml:"include"`
 	Exclude       []string `toml:"exclude"`
 
-	Documents   Documents   `toml:"documents"`
-	Assets      Assets      `toml:"assets"`
-	Annotations Annotations `toml:"annotations"`
-	Search      Search      `toml:"search"`
-	Git         Git         `toml:"git"`
-	Security    Security    `toml:"security"`
-	Groups      []Group     `toml:"groups"`
+	Documents     Documents     `toml:"documents"`
+	Assets        Assets        `toml:"assets"`
+	Annotations   Annotations   `toml:"annotations"`
+	Search        Search        `toml:"search"`
+	Git           Git           `toml:"git"`
+	Security      Security      `toml:"security"`
+	Relationships Relationships `toml:"relationships"`
+	Groups        []Group       `toml:"groups"`
 
 	// SourcePath is the absolute path of the loaded configuration file.
 	SourcePath string `toml:"-"`
@@ -86,6 +85,19 @@ type Search struct {
 // Git toggles the read-only Git context (R12, D-019).
 type Git struct {
 	Enabled bool `toml:"enabled"`
+}
+
+// Relationships configures which front-matter fields name explicit
+// relationships between documents (R10, spec 05 section 2). Athenaeum never
+// infers a relationship; these fields are the only front-matter source it reads.
+type Relationships struct {
+	FrontMatter RelationshipFrontMatter `toml:"front_matter"`
+}
+
+// RelationshipFrontMatter lists the front-matter keys treated as relationships.
+// The key name is the relationship kind (e.g. "related", "implements").
+type RelationshipFrontMatter struct {
+	Fields []string `toml:"fields"`
 }
 
 // Security holds the write boundary and external-read authority (spec 03).
@@ -170,12 +182,6 @@ func (c *Config) finalise(md toml.MetaData) error {
 	for _, key := range md.Undecoded() {
 		c.undecoded = append(c.undecoded, key.String())
 	}
-	// relationships.front_matter is read by the relationships service in
-	// Phase 4 and has no field on Config yet. Accept it now rather than
-	// reporting the shipped example configuration as invalid.
-	c.undecoded = slices.DeleteFunc(c.undecoded, func(key string) bool {
-		return key == "relationships" || strings.HasPrefix(key, "relationships.")
-	})
 
 	if !md.IsDefined("schema_version") {
 		return errors.New("config: schema_version is required (spec 05 section 6)")
