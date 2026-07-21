@@ -93,6 +93,19 @@ func (s *Server) handleAnnotationList(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) handleAnnotationOverview(w http.ResponseWriter, r *http.Request) {
+	svc := s.annotationService(w, r)
+	if svc == nil {
+		return
+	}
+	overview, err := svc.Overview()
+	if err != nil {
+		s.writeAnnotationError(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, overview)
+}
+
 func (s *Server) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) {
 	svc := s.annotationService(w, r)
 	if svc == nil {

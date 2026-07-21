@@ -234,6 +234,45 @@ func TestUpdateResolveAndDelete(t *testing.T) {
 	}
 }
 
+func TestOverviewCollectsPinsAndUnresolved(t *testing.T) {
+	docs := fakeDocs{content: "# Title\nThe index is a disposable cache.\n"}
+	svc, _, _ := newService(t, docs)
+
+	// An open comment (unresolved), a pin, and a resolved comment (neither).
+	mustCreate(t, svc, VisibilityShared, "still open")
+	if _, _, err := svc.Create(CreateRequest{
+		DocumentID: "docs/architecture.md", Kind: KindPin, Visibility: VisibilityPersonal,
+		Anchor: Anchor{Type: AnchorDocument},
+	}); err != nil {
+		t.Fatalf("create pin: %v", err)
+	}
+	resolved, rev, err := svc.Create(CreateRequest{
+		DocumentID: "docs/architecture.md", Kind: KindComment, Visibility: VisibilityShared,
+		Body: "done", Anchor: textAnchor(), ExpectedRevision: 1,
+	})
+	if err != nil {
+		t.Fatalf("create resolved: %v", err)
+	}
+	done := StatusResolved
+	if _, _, err := svc.Update(UpdateRequest{
+		DocumentID: "docs/architecture.md", Visibility: VisibilityShared, ID: resolved.ID,
+		Status: &done, ExpectedRevision: rev,
+	}); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	ov, err := svc.Overview()
+	if err != nil {
+		t.Fatalf("Overview: %v", err)
+	}
+	if len(ov.Pins) != 1 || ov.Pins[0].DocumentID != "docs/architecture.md" {
+		t.Fatalf("pins = %+v, want one on docs/architecture.md", ov.Pins)
+	}
+	if len(ov.Unresolved) != 1 || ov.Unresolved[0].Body != "still open" {
+		t.Fatalf("unresolved = %+v, want the single open comment", ov.Unresolved)
+	}
+}
+
 func TestPersonalUnavailableIsExplicit(t *testing.T) {
 	docs := fakeDocs{content: "body"}
 	svc := NewService(Options{SharedDir: t.TempDir(), Docs: docs}) // no personal dir

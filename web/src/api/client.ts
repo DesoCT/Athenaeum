@@ -16,6 +16,7 @@ import type {
 import type {
   Annotation,
   AnnotationList,
+  AnnotationOverview,
   AnnotationStatus,
   CreateAnnotationInput,
 } from "../annotations/types";
@@ -531,4 +532,9 @@ export async function deleteNote(visibility: string, id: string): Promise<void> 
 /** getRelationships returns a document's outgoing links and backlinks (R10). */
 export function getRelationships(documentId: string): Promise<RelationshipResult> {
   return request<RelationshipResult>(`/relationships/${encodePath(documentId)}`);
+}
+
+/** getAnnotationOverview returns workspace-wide pins and unresolved comments (spec 04 section 3). */
+export function getAnnotationOverview(): Promise<AnnotationOverview> {
+  return request<AnnotationOverview>("/annotations/overview");
 }

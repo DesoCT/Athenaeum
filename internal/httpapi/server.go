@@ -133,6 +133,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET "+APIPrefix+"/recovery", s.guard(http.HandlerFunc(s.handleRecoveryList)))
 	s.mux.Handle("PUT "+APIPrefix+"/recovery", s.guard(http.HandlerFunc(s.handleRecoveryPut)))
 	s.mux.Handle("DELETE "+APIPrefix+"/recovery/{id...}", s.guard(http.HandlerFunc(s.handleRecoveryDelete)))
+	s.mux.Handle("GET "+APIPrefix+"/annotations/overview", s.guard(http.HandlerFunc(s.handleAnnotationOverview)))
 	s.mux.Handle("GET "+APIPrefix+"/annotations", s.guard(http.HandlerFunc(s.handleAnnotationList)))
 	s.mux.Handle("POST "+APIPrefix+"/annotations", s.guard(http.HandlerFunc(s.handleAnnotationCreate)))
 	s.mux.Handle("PATCH "+APIPrefix+"/annotations/{id}", s.guard(http.HandlerFunc(s.handleAnnotationUpdate)))

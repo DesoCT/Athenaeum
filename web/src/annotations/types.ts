@@ -54,6 +54,23 @@ export interface AnchorInput {
   suffix?: string;
 }
 
+/** A lightweight annotation pointer for the Map Room home (spec 04 section 3). */
+export interface AnnotationRef {
+  id: string;
+  document_id: string;
+  visibility: Visibility;
+  kind: AnnotationKind;
+  status: AnnotationStatus;
+  body: string;
+  line?: number;
+}
+
+/** Workspace-wide annotation summary: pins and unresolved comments. */
+export interface AnnotationOverview {
+  pins: AnnotationRef[];
+  unresolved: AnnotationRef[];
+}
+
 export interface CreateAnnotationInput {
   document_id: string;
   kind: AnnotationKind;

@@ -841,7 +841,13 @@
         {/each}
 
         {#if openTabs.length === 0 && !docError}
-          <MapRoomHome {workspace} {documents} {recent} onopen={(id) => void open(id)} />
+          <MapRoomHome
+            {workspace}
+            {documents}
+            {recent}
+            generation={workspaceGeneration}
+            onopen={(id, line) => void open(id, line)}
+          />
         {/if}
       {/if}
     </main>
