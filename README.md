@@ -8,14 +8,21 @@ Athenaeum is not a chat product, a memory system, a semantic knowledge graph, a
 collaboration service, a cloud service, a WYSIWYG editor, or a Git client. It is
 useful with no language model, no API key, and no internet connection.
 
-**Status:** v0.1 in development. Phases 0 to 5 are complete: the repository
-foundation, workspace loading and the read-only Map Room, editing with atomic
-saves and crash recovery, workspace search with session restoration, the
-annotation layer — anchored comments and pins with repair, personal and shared
-notes, explicit relationships with backlinks, and Map Room summaries — and the
-read-only Git panel: status, working-tree diff, history, and blame, through an
-enforced allow-list that can reach no mutating command. Remote-mode hardening
-and release packaging (Phase 6) remain.
+**Status:** v0.1 feature-complete, published as tagged alpha releases while it
+settles. Every phase of the delivery plan is in: the repository foundation;
+workspace loading and the Map Room; editing with atomic saves and crash
+recovery; workspace search with session restoration; the annotation layer —
+anchored comments and pins with repair, personal and shared notes, explicit
+relationships with backlinks, and pin, unresolved, and changed-file summaries on
+the Map Room home; the read-only Git panel (status, working-tree diff, history,
+and blame, through an enforced allow-list that can reach no mutating command);
+and remote-mode hardening — token authentication, origin controls, and a guard
+that refuses to downgrade data written by a newer version. Releases are
+cross-compiled for macOS and Linux and installable with the one-liner below.
+
+The one deliberate gap before a final v0.1 is code signing: the release binaries
+are unsigned, so a browser-downloaded macOS build needs the quarantine attribute
+cleared (the installer does this for you).
 
 Measured startup, responsiveness, and scale numbers are in
 [docs/measurements.md](docs/measurements.md).
@@ -139,29 +146,56 @@ you want to read but never edit by accident.
 ## Commands
 
 ```text
-athenaeum open     [path-to-athenaeum.toml]   start and open a browser
-athenaeum serve    [path-to-athenaeum.toml]   start without opening a browser
-athenaeum validate [path-to-athenaeum.toml]   check configuration and exit
-athenaeum version                             print the build version
+athenaeum open       [path-to-athenaeum.toml]   start and open a browser
+athenaeum serve      [path-to-athenaeum.toml]   start without opening a browser
+athenaeum validate   [path-to-athenaeum.toml]   check configuration and exit
+athenaeum workspaces                            list the workspace registry
+athenaeum version                               print the build version
 ```
+
+Without a path, `open` and `serve` use `./athenaeum.toml` when it exists, and
+otherwise start at the workspace picker.
 
 Flags may appear before or after the workspace path.
 
 | Flag | Meaning |
 |---|---|
 | `--no-open` | Do not open a browser |
+| `--pick` | Start at the workspace picker, ignoring `./athenaeum.toml` |
+| `--registry <path>` | Workspace registry file (default `<user-config>/athenaeum/workspaces.toml`) |
 | `--bind <address>` | Address to bind (default `127.0.0.1`) |
 | `--port <number>` | Port to bind (default `7777`; `0` chooses a free port) |
 | `--remote` | Serve beyond loopback; requires `--bind` and `--auth-token-file` |
 | `--auth-token-file <path>` | File holding the remote-mode token |
 | `--log-level <level>` | `debug`, `info`, `warn`, or `error` |
-| `--safe-mode` | Disable Git, remote assets, raw HTML, and Mermaid |
+| `--safe-mode` | Disable Git, remote assets, raw HTML, Mermaid, and user overrides |
+
+## Multiple workspaces
+
+A session opens exactly one workspace, but you can register several and switch
+between them — a launcher, not a multi-root view (ADR-0004). List them in
+`<user-config>/athenaeum/workspaces.toml`, which Athenaeum only ever reads:
+
+```toml
+[[workspace]]
+name = "Athenaeum"
+path = "~/dev/athenaeum"
+
+[[workspace]]
+name = "Field notes"
+path = "~/notes"
+```
+
+Run `athenaeum` with no local `athenaeum.toml` to land on the picker, or
+`athenaeum workspaces` to list them without a browser. In the app, the
+**Workspaces** menu in the command bar switches between them. The config
+generator writes this file for you with `--registry` (see above).
 
 ## Development
 
 ```bash
 make dev      # Go API on :7777 and Vite on :5173 with hot reload
-make test     # Go tests and frontend type-check
+make test     # all Go and frontend tests
 make lint     # go vet and gofmt
 make test-acceptance   # acceptance scenarios against the built binary
 make package  # cross-compiled release archives for macOS and Linux
@@ -180,7 +214,7 @@ web/               Svelte + TypeScript frontend, embedded into the binary
 examples/          fixture workspace used by acceptance tests
 docs/spec/         the normative v0.1 specification pack
 docs/adr/          architecture decision records
-scripts/           exclusion checks and build helpers
+scripts/           install and config-generator scripts, exclusion checks, build helpers
 test/acceptance/   acceptance scenarios run against a built binary
 ```
 

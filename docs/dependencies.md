@@ -49,7 +49,8 @@ telemetry, network activity, or CGO.
 
 ### gopkg.in/yaml.v3 — MIT and Apache-2.0
 
-- **Reason:** YAML front matter (R3, spec 03 section 4).
+- **Reason:** YAML front matter (R3, spec 03 section 4) and the note file format,
+  which is Markdown with a YAML front-matter block (R9, spec 03 section 4).
 - **Alternatives:** `goccy/go-yaml` is faster and has better error messages but
   a larger surface; yaml.v3 is the de facto standard and adequate for
   front-matter-sized documents.
@@ -74,7 +75,11 @@ telemetry, network activity, or CGO.
 
 ### golang.org/x/sys — BSD-3-Clause
 
-- **Reason:** transitive dependency of fsnotify. Not imported directly.
+- **Reason:** the path-security check must reject device files, sockets, and
+  named pipes before a write (spec 03 section 6), which needs `Stat` mode bits
+  the standard library does not expose portably; `internal/security` imports
+  `x/sys/unix` for that. It is also a transitive dependency of fsnotify.
+- **Impact:** pure Go, platform syscalls only, no subprocess or network.
 
 ## Frontend
 

@@ -34,6 +34,14 @@ athenaeum validate athenaeum.toml
 That reports every problem at once, naming the field and what to do about it,
 and exits non-zero if anything is wrong.
 
+Or let the generator write a starting config for you by inspecting the folder —
+it scopes to Markdown, excludes build and dependency noise, and makes a group
+per sub-directory that contains Markdown:
+
+```bash
+scripts/athenaeum-config.sh --write ~/notes
+```
+
 ## Choosing which documents appear
 
 ```toml
@@ -170,6 +178,32 @@ it loses nothing — it rebuilds from your files.
 repository. Athenaeum only ever reads: it cannot commit, push, or change
 anything in your repository.
 
+## Annotations, notes, and relationships
+
+Comments, pins, and notes are stored beside your documents without touching
+them. Shared ones live under `.athenaeum/shared/` in the workspace, so they can
+be committed; personal ones live in your user data directory and never enter the
+repository. The default visibility is configurable:
+
+```toml
+[annotations]
+shared_directory = ".athenaeum/shared"
+default_visibility = "personal"    # personal | shared
+```
+
+Backlinks come from explicit links only — Markdown links, wiki links, and
+front-matter fields you nominate. Nothing is inferred from similarity. Name the
+front-matter fields that mean a relationship, and their key becomes the
+relationship kind:
+
+```toml
+[relationships.front_matter]
+fields = ["related", "implements", "supersedes"]
+```
+
+With that, a document whose front matter contains `related: [design.md]` shows
+an outgoing link to `design.md`, and `design.md` shows the backlink.
+
 ## A complete example
 
 ```toml
@@ -205,6 +239,9 @@ writable = ["notes/**/*.md", "assets/**"]
 id = "reference"
 title = "Reference"
 patterns = ["reference/**/*.md"]
+
+[relationships.front_matter]
+fields = ["related", "implements", "supersedes"]
 ```
 
 ## When something is not working
@@ -226,8 +263,8 @@ patterns = ["reference/**/*.md"]
 athenaeum serve athenaeum.toml --safe-mode
 ```
 
-Disables Git, remote assets, raw HTML, and Mermaid. Documents stay readable and
-editable under the normal write rules.
+Disables Git, remote assets, raw HTML, Mermaid, and user overrides. Documents
+stay readable and editable under the normal write rules.
 
 ---
 

@@ -4,6 +4,17 @@ Athenaeum is a single executable with the frontend embedded. Copying that one
 file to a machine is the whole installation: no Node.js, no npm, no SQLite CLI,
 no database process, no browser extension (constitution C6, requirement N4).
 
+If the target machine has internet access, the one-line installer is the
+shortest path — it downloads the newest release for that machine's OS and
+architecture and installs it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DesoCT/Athenaeum/main/scripts/install.sh | sh
+```
+
+The rest of this guide covers the manual and offline route: copying an archive
+across yourself, and serving to other machines over the network.
+
 ## 1. Get the archives
 
 Released versions are built and published automatically. Pushing a version tag
