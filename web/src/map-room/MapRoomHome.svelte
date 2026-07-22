@@ -202,7 +202,10 @@
     flex-direction: column;
     gap: var(--gap);
     padding: 2rem;
+    width: 100%;
     max-width: 56rem;
+    /* Centre the home column in the surface when no document is open. */
+    margin-inline: auto;
   }
 
   .card {
