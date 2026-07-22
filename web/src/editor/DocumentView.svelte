@@ -440,6 +440,41 @@
   // anchor to its blocks and observe selections (R8).
   let previewRoot = $state<HTMLElement | null>(null);
 
+  // Split-view sizing. splitRatio is the editor's share of the width; a
+  // draggable divider adjusts it, clamped so neither pane can be squeezed away.
+  let surfaceEl = $state<HTMLElement | null>(null);
+  let splitRatio = $state(0.5);
+  let resizing = $state(false);
+
+  // A CSS variable rather than an inline grid-template, so the narrow-screen
+  // media query below can still override the columns and stack the panes.
+  const surfaceStyle = $derived(mode === "split" ? `--split: ${splitRatio};` : "");
+
+  function startResize(event: PointerEvent): void {
+    event.preventDefault();
+    resizing = true;
+  }
+
+  // While resizing, track the pointer against the surface width. Window-level
+  // listeners keep the drag alive even when the pointer outruns the divider.
+  $effect(() => {
+    if (!resizing) return;
+    const move = (event: PointerEvent) => {
+      const el = surfaceEl;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const ratio = (event.clientX - rect.left) / rect.width;
+      splitRatio = Math.min(0.8, Math.max(0.2, ratio));
+    };
+    const stop = () => (resizing = false);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+  });
+
 
   const stateLabel = $derived.by(() => {
     // read_only covers encoding and size limits; a document outside the write
@@ -530,7 +565,7 @@
     </aside>
   {/if}
 
-  <div class="surface" class:split={mode === "split"}>
+  <div class="surface" class:split={mode === "split"} class:resizing bind:this={surfaceEl} style={surfaceStyle}>
     {#if mode !== "preview"}
       <div class="editor-pane">
         <Editor
@@ -546,6 +581,19 @@
           online={(line) => (sourceLine = line)}
         />
       </div>
+    {/if}
+
+    {#if mode === "split"}
+      <!-- Draggable divider to rebalance the two panes (keyboard users can rely
+           on the source/preview mode buttons instead). -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="divider"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize editor and preview"
+        onpointerdown={startResize}
+      ></div>
     {/if}
 
     {#if mode !== "source"}
@@ -753,7 +801,43 @@
   }
 
   .surface.split {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns:
+      minmax(0, calc(var(--split, 0.5) * 1fr))
+      0.5rem
+      minmax(0, calc((1 - var(--split, 0.5)) * 1fr));
+  }
+
+  /* While dragging the divider, suppress text selection and pane scrolling
+     jitter across the whole surface. */
+  .surface.resizing {
+    user-select: none;
+    cursor: col-resize;
+  }
+
+  .divider {
+    align-self: stretch;
+    width: 0.5rem;
+    margin: 0 -0.15rem;
+    cursor: col-resize;
+    background: transparent;
+    position: relative;
+  }
+
+  /* A thin visible handle centred in the hit area. */
+  .divider::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--line-strong);
+    transform: translateX(-50%);
+  }
+
+  .divider:hover::after,
+  .surface.resizing .divider::after {
+    width: 2px;
+    background: var(--accent);
   }
 
   .editor-pane {
@@ -840,6 +924,10 @@
   @media (max-width: 900px) {
     .surface.split {
       grid-template-columns: 1fr;
+    }
+
+    .divider {
+      display: none;
     }
   }
 </style>

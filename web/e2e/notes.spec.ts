@@ -31,7 +31,7 @@ test.describe("Notes", () => {
     await page.getByLabel("Visibility").selectOption("shared");
     await page.getByRole("button", { name: "Create note" }).click();
 
-    // The note opens in the main surface as its own tab.
+    // The note opens in a modal editor over the surface.
     await expect(page.getByLabel("Note title")).toHaveValue("Design review");
 
     // The shared note file is committable and under the workspace.
