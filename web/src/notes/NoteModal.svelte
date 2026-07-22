@@ -1,20 +1,22 @@
 <script lang="ts">
   import NoteView from "./NoteView.svelte";
   import type { Note, NoteLink } from "./types";
-  import type { Capabilities } from "../api/types";
+  import type { Capabilities, DocumentSummary } from "../api/types";
 
   interface Props {
     note: Note;
     capabilities: Capabilities;
+    /** Documents offered as link targets when editing the note. */
+    documents?: DocumentSummary[];
     /** Close the modal (guarded when there are unsaved edits). */
     onclose: () => void;
     /** Follow a link in the note to a document, closing the modal first. */
     onopenlink: (link: NoteLink) => void;
-    /** Bumped after a delete so the notes list refreshes. */
+    /** Bumped after a create, update, or delete so the notes list refreshes. */
     onchanged?: () => void;
   }
 
-  let { note, capabilities, onclose, onopenlink, onchanged }: Props = $props();
+  let { note, capabilities, documents = [], onclose, onopenlink, onchanged }: Props = $props();
 
   let dirty = $state(false);
 
@@ -36,8 +38,10 @@
     <NoteView
       {note}
       {capabilities}
+      {documents}
       active={true}
       ondirty={(d) => (dirty = d)}
+      onsaved={() => onchanged?.()}
       onopenlink={(link) => {
         onclose();
         onopenlink(link);

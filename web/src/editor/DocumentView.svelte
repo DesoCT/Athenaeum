@@ -801,10 +801,13 @@
   }
 
   .surface.split {
+    /* Percentages, not fr: fr units are invalid inside calc(), which would drop
+       the whole declaration and collapse the grid to a single stacked column.
+       The editor takes var(--split) of the width; the preview fills the rest. */
     grid-template-columns:
-      minmax(0, calc(var(--split, 0.5) * 1fr))
+      minmax(0, calc(var(--split, 0.5) * 100%))
       0.5rem
-      minmax(0, calc((1 - var(--split, 0.5)) * 1fr));
+      minmax(0, 1fr);
   }
 
   /* While dragging the divider, suppress text selection and pane scrolling

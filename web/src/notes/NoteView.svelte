@@ -1,23 +1,30 @@
 <script lang="ts">
-  import { updateNote, deleteNote, NoteConflictError, ApiError } from "../api/client";
-  import type { Capabilities, DocumentDetail } from "../api/types";
-  import type { Note, NoteLink } from "./types";
+  import { createNote, updateNote, deleteNote, NoteConflictError, ApiError } from "../api/client";
+  import type { Capabilities, DocumentDetail, DocumentSummary } from "../api/types";
+  import type { Note, NoteLink, Visibility } from "./types";
   import Editor from "../editor/Editor.svelte";
   import Preview from "../renderer/Preview.svelte";
 
   interface Props {
+    /** The note to edit, or a blank draft (empty id) to create. */
     note: Note;
     capabilities: Capabilities;
     active?: boolean;
+    /** Documents offered as link targets. */
+    documents?: DocumentSummary[];
     /** Opens a linked document, optionally at a heading (G4). */
     onopenlink?: (link: NoteLink) => void;
-    /** Reports dirty state to the tab strip. */
+    /** Reports dirty state so the modal can guard a close. */
     ondirty?: (dirty: boolean) => void;
-    /** Removes this note's tab after deletion. */
+    /** Fires after a successful create or update, so the notes list refreshes. */
+    onsaved?: (note: Note) => void;
+    /** Removes this note after deletion. */
     onclosed?: () => void;
   }
 
-  let { note, capabilities, active = true, onopenlink, ondirty, onclosed }: Props = $props();
+  let { note, capabilities, active = true, documents = [], onopenlink, ondirty, onsaved, onclosed }: Props = $props();
+
+  const isNew = $derived(note.id === "");
 
   type Mode = "split" | "source" | "preview";
   let mode = $state<Mode>("split");
@@ -28,31 +35,46 @@
   /* svelte-ignore state_referenced_locally */
   let body = $state(note.body);
   /* svelte-ignore state_referenced_locally */
+  let visibility = $state<Visibility>(note.visibility || "personal");
+  /* svelte-ignore state_referenced_locally */
+  let links = $state<NoteLink[]>([...(note.links ?? [])]);
+  /* svelte-ignore state_referenced_locally */
   let baseVersion = $state(note.version);
   /* svelte-ignore state_referenced_locally */
   let lastLoadedId = $state(note.id);
 
+  // Draft link being added.
+  let linkDoc = $state("");
+  let linkHeading = $state("");
+
   type SaveState = { kind: "saved" } | { kind: "dirty" } | { kind: "saving" } | { kind: "failed"; message: string };
   let saveState = $state<SaveState>({ kind: "saved" });
 
-  // Re-seed when a different note arrives in the same component slot.
+  // Re-seed when a different note (or draft) arrives in the same slot.
   $effect(() => {
     if (note.id !== lastLoadedId) {
       lastLoadedId = note.id;
       title = note.title;
       body = note.body;
+      visibility = note.visibility || "personal";
+      links = [...(note.links ?? [])];
       baseVersion = note.version;
       saveState = { kind: "saved" };
     }
   });
 
-  const dirty = $derived(title !== note.title || body !== note.body || saveState.kind === "dirty");
+  const linksChanged = $derived(JSON.stringify(links) !== JSON.stringify(note.links ?? []));
+  const dirty = $derived(
+    isNew
+      ? title.trim() !== "" || body.trim() !== "" || links.length > 0
+      : title !== note.title || body !== note.body || linksChanged || saveState.kind === "dirty",
+  );
   $effect(() => ondirty?.(dirty));
 
-  // The body is rendered through the same pipeline as a document, so a note
-  // reads exactly like the rest of the workspace (reuse over a second renderer).
+  // The body renders through the same pipeline as a document, so a note reads
+  // exactly like the rest of the workspace (reuse over a second renderer).
   const asDocument = $derived<DocumentDetail>({
-    id: `note:${note.id}`,
+    id: `note:${note.id || "new"}`,
     title,
     size: body.length,
     mod_time: note.updated_at,
@@ -69,21 +91,42 @@
     read_only: false,
   });
 
+  function addLink(): void {
+    if (!linkDoc) return;
+    links = [...links, { document: linkDoc, ...(linkHeading.trim() ? { heading: linkHeading.trim() } : {}) }];
+    linkDoc = "";
+    linkHeading = "";
+  }
+
+  function removeLink(index: number): void {
+    links = links.filter((_, i) => i !== index);
+  }
+
   async function save(): Promise<void> {
+    if (title.trim() === "") {
+      saveState = { kind: "failed", message: "A note needs a title." };
+      return;
+    }
     saveState = { kind: "saving" };
     try {
-      const updated = await updateNote(note.id, {
-        visibility: note.visibility,
-        expected_version: baseVersion,
-        title,
-        body,
-      });
-      baseVersion = updated.version;
-      // Reflect the saved values back so `dirty` settles to false.
-      note = updated;
-      title = updated.title;
-      body = updated.body;
+      const result = isNew
+        ? await createNote({ title: title.trim(), visibility, body, links })
+        : await updateNote(note.id, {
+            visibility: note.visibility,
+            expected_version: baseVersion,
+            title: title.trim(),
+            body,
+            links,
+          });
+      note = result;
+      title = result.title;
+      body = result.body;
+      visibility = result.visibility;
+      links = [...(result.links ?? [])];
+      baseVersion = result.version;
+      lastLoadedId = result.id;
       saveState = { kind: "saved" };
+      onsaved?.(result);
     } catch (err) {
       if (err instanceof NoteConflictError) {
         saveState = { kind: "failed", message: "This note changed elsewhere. Reopen it to see the current version." };
@@ -94,6 +137,10 @@
   }
 
   async function remove(): Promise<void> {
+    if (isNew) {
+      onclosed?.();
+      return;
+    }
     if (!window.confirm(`Delete note "${note.title}"? This cannot be undone.`)) return;
     try {
       await deleteNote(note.visibility, note.id);
@@ -107,7 +154,7 @@
     switch (saveState.kind) {
       case "saving": return "Saving…";
       case "failed": return "Save failed";
-      default: return dirty ? "Unsaved changes" : "Saved";
+      default: return isNew ? "New note" : dirty ? "Unsaved changes" : "Saved";
     }
   });
 </script>
@@ -117,7 +164,14 @@
   <header class="note-header">
     <div class="identity">
       <input class="note-title" bind:value={title} aria-label="Note title" placeholder="Untitled note" />
-      <span class="visibility-badge {note.visibility}">{note.visibility}</span>
+      {#if isNew}
+        <select class="visibility-select" bind:value={visibility} aria-label="Visibility">
+          <option value="personal">Personal</option>
+          <option value="shared">Shared</option>
+        </select>
+      {:else}
+        <span class="visibility-badge {note.visibility}">{note.visibility}</span>
+      {/if}
     </div>
     <div class="controls">
       <div class="modes" role="group" aria-label="View mode">
@@ -129,24 +183,37 @@
       </div>
       <span class="state" class:dirty={dirty} class:danger={saveState.kind === "failed"} role="status">{stateLabel}</span>
       <button type="button" class="save" onclick={save} disabled={!dirty || saveState.kind === "saving"}>Save <kbd>⌘S</kbd></button>
-      <button type="button" class="delete" onclick={remove}>Delete</button>
+      <button type="button" class="delete" onclick={remove}>{isNew ? "Discard" : "Delete"}</button>
     </div>
   </header>
 
-  {#if note.links && note.links.length > 0}
-    <div class="links" aria-label="Linked targets">
-      {#each note.links as link}
-        {#if link.document}
-          <button type="button" class="link-chip" onclick={() => onopenlink?.(link)}>
+  <div class="links-row">
+    {#each links as link, i (i)}
+      {#if link.document}
+        <span class="link-chip">
+          <button type="button" class="chip-open" onclick={() => onopenlink?.(link)}>
             → {link.document}{link.heading ? ` › ${link.heading}` : ""}
           </button>
-        {/if}
-      {/each}
-    </div>
-  {/if}
+          <button type="button" class="chip-remove" aria-label="Remove link" onclick={() => removeLink(i)}>×</button>
+        </span>
+      {/if}
+    {/each}
+    <span class="add-link">
+      <select bind:value={linkDoc} aria-label="Link a document">
+        <option value="">Link a document…</option>
+        {#each documents as d}
+          <option value={d.id}>{d.title}</option>
+        {/each}
+      </select>
+      {#if linkDoc}
+        <input class="heading-input" bind:value={linkHeading} placeholder="Heading (optional)" aria-label="Link heading" />
+      {/if}
+      <button type="button" class="add-btn" onclick={addLink} disabled={!linkDoc}>Add</button>
+    </span>
+  </div>
 
   {#if saveState.kind === "failed"}
-    <aside class="save-failed" role="alert"><p>{stateLabel === "Save failed" ? (saveState as { message: string }).message : ""}</p></aside>
+    <aside class="save-failed" role="alert"><p>{(saveState as { message: string }).message}</p></aside>
   {/if}
 
   <div class="surface" class:split={mode === "split"}>
@@ -170,13 +237,17 @@
 
 <style>
   .note { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 1rem 1.25rem; }
-  .note-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; }
+  .note-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
   .identity { display: flex; align-items: center; gap: 0.6rem; flex: 1; min-width: 0; }
   .note-title {
     flex: 1; min-width: 0; padding: 0.3rem 0.4rem; border: 1px solid transparent; border-radius: var(--radius);
     background: transparent; color: var(--text-primary); font: inherit; font-size: 1.1rem; font-weight: 600;
   }
   .note-title:hover, .note-title:focus { border-color: var(--line-strong); background: var(--surface-panel); outline: none; }
+  .visibility-select {
+    padding: 0.25rem 0.4rem; border: 1px solid var(--line-strong); border-radius: var(--radius);
+    background: var(--surface-panel); color: var(--text-secondary); font: inherit; font-size: 0.75rem;
+  }
   .visibility-badge {
     padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em;
     border: 1px solid var(--line-strong); color: var(--text-secondary);
@@ -194,9 +265,16 @@
   .delete { color: var(--danger); }
   .save:disabled { opacity: 0.45; cursor: default; }
   kbd { font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-muted); }
-  .links { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.6rem; }
-  .link-chip { padding: 0.2rem 0.55rem; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-panel); color: var(--accent); font: inherit; font-size: 0.72rem; cursor: pointer; }
-  .save-failed { margin-bottom: 0.75rem; padding: 0.6rem 0.9rem; border: 1px solid var(--danger); border-radius: var(--radius); color: var(--danger); font-size: 0.85rem; }
+  .links-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-bottom: 0.6rem; }
+  .link-chip { display: inline-flex; align-items: center; border: 1px solid var(--line-strong); border-radius: 999px; overflow: hidden; }
+  .chip-open { padding: 0.2rem 0.5rem; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 0.72rem; cursor: pointer; }
+  .chip-remove { padding: 0.2rem 0.4rem; border: 0; border-left: 1px solid var(--line-strong); background: transparent; color: var(--text-muted); font: inherit; cursor: pointer; }
+  .chip-remove:hover { color: var(--danger); }
+  .add-link { display: inline-flex; align-items: center; gap: 0.3rem; }
+  .add-link select, .heading-input { padding: 0.2rem 0.35rem; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-panel); color: var(--text-secondary); font: inherit; font-size: 0.72rem; }
+  .add-btn { padding: 0.2rem 0.5rem; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-panel); color: var(--text-secondary); font: inherit; font-size: 0.72rem; cursor: pointer; }
+  .add-btn:disabled { opacity: 0.45; cursor: default; }
+  .save-failed { margin-bottom: 0.6rem; padding: 0.5rem 0.8rem; border: 1px solid var(--danger); border-radius: var(--radius); color: var(--danger); font-size: 0.82rem; }
   .save-failed p { margin: 0; }
   .surface { display: grid; grid-template-columns: 1fr; gap: 1rem; flex: 1; min-height: 0; }
   .surface.split { grid-template-columns: 1fr 1fr; }
