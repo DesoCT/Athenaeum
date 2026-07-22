@@ -32,6 +32,8 @@
   import MapRoomHome from "./map-room/MapRoomHome.svelte";
   import WorkspacePicker from "./map-room/WorkspacePicker.svelte";
   import WorkspaceMenu from "./map-room/WorkspaceMenu.svelte";
+  import ScaffoldModal from "./map-room/ScaffoldModal.svelte";
+  import { scaffoldWorkspace, type Scaffold } from "./map-room/scaffold";
   import DocumentView from "./editor/DocumentView.svelte";
   import NoteModal from "./notes/NoteModal.svelte";
   import NotesPanel from "./notes/NotesPanel.svelte";
@@ -92,6 +94,16 @@
   // The note being worked on, shown in a modal over the document surface (R9).
   // Notes are free-standing, so they overlay rather than joining the tab strip.
   let noteModal = $state<Note | null>(null);
+
+  // A pending "make a workspace from this folder" dialog, opened by right-clicking
+  // a directory in the tree. The app only reads the registry (ADR-0004), so this
+  // shows the config and registry snippet to save rather than writing them.
+  let scaffold = $state<Scaffold | null>(null);
+
+  function openScaffold(dirPath: string): void {
+    if (!workspace) return;
+    scaffold = scaffoldWorkspace(dirPath, workspace.root, documents);
+  }
   /** Which context-panel tab is showing: outline, notes, links, or git. */
   let contextTab = $state<"outline" | "notes" | "links" | "git">("outline");
   /** Bumped to make the notes panel re-read after a create or delete. */
@@ -271,6 +283,7 @@
     highlightLine = null;
     quickOpenVisible = false;
     noteModal = null;
+    scaffold = null;
     openTabs = [];
     loadedDocs = {};
     tabView = {};
@@ -748,6 +761,7 @@
               if (expanded.has(path)) expanded.delete(path);
               else expanded.add(path);
             }}
+            onscaffold={openScaffold}
           />
         {/if}
       {:else}
@@ -928,6 +942,14 @@
     onclose={() => (noteModal = null)}
     onopenlink={(link) => void openLink(link)}
     onchanged={() => (notesReload += 1)}
+  />
+{/if}
+
+{#if scaffold}
+  <ScaffoldModal
+    {scaffold}
+    registryPath={registry?.registry_path ?? null}
+    onclose={() => (scaffold = null)}
   />
 {/if}
 

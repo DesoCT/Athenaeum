@@ -10,9 +10,11 @@
     depth?: number;
     expanded: Set<string>;
     ontoggle: (path: string) => void;
+    /** Right-clicking a directory offers to make a workspace from it. */
+    onscaffold?: (dirPath: string) => void;
   }
 
-  let { nodes, activeId, onopen, depth = 0, expanded, ontoggle }: Props = $props();
+  let { nodes, activeId, onopen, depth = 0, expanded, ontoggle, onscaffold }: Props = $props();
 </script>
 
 <ul class="tree" role={depth === 0 ? "tree" : "group"}>
@@ -25,7 +27,13 @@
           class="row directory"
           style="padding-left: {0.5 + depth * 0.75}rem"
           aria-expanded={isOpen}
+          title={onscaffold ? "Right-click to make a workspace from this folder" : undefined}
           onclick={() => ontoggle(node.path)}
+          oncontextmenu={(e) => {
+            if (!onscaffold) return;
+            e.preventDefault();
+            onscaffold(node.path);
+          }}
         >
           <span class="chevron" class:open={isOpen} aria-hidden="true">›</span>
           <span class="label">{node.name}</span>
@@ -37,6 +45,7 @@
             {onopen}
             {expanded}
             {ontoggle}
+            {onscaffold}
             depth={depth + 1}
           />
         {/if}
