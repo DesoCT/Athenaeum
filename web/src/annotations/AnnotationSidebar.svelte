@@ -19,10 +19,15 @@
     /** The authoritative outline, for the heading path of a new anchor (ADR-0003). */
     outline: Heading[];
     capabilities: Capabilities;
-    /** Whether personal annotation storage is available this session. */
+    /**
+     * Reports whether the margin has anything to show, so the preview only
+     * reserves the annotation gutter when there is an annotation or a
+     * pending one — otherwise it would leave a dead strip beside the text.
+     */
+    onmargin?: (occupied: boolean) => void;
   }
 
-  let { documentId, root, outline, capabilities }: Props = $props();
+  let { documentId, root, outline, capabilities, onmargin }: Props = $props();
 
   let list = $state<AnnotationList | null>(null);
   let notice = $state<string | null>(null);
@@ -43,6 +48,11 @@
 
   const anchored = $derived((list?.annotations ?? []).filter((a) => a.anchor.state !== "detached"));
   const detached = $derived((list?.annotations ?? []).filter((a) => a.anchor.state === "detached"));
+
+  // The margin is only worth reserving when it holds something.
+  $effect(() => {
+    onmargin?.(anchored.length > 0 || detached.length > 0 || draftAnchor != null);
+  });
 
   async function reload(): Promise<void> {
     try {

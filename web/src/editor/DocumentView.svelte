@@ -439,6 +439,10 @@
   // The rendered article, handed over by Preview so the annotation layer can
   // anchor to its blocks and observe selections (R8).
   let previewRoot = $state<HTMLElement | null>(null);
+  // Whether the annotation margin currently holds anything; the preview only
+  // reserves the gutter when it does, so an unannotated document uses the full
+  // width instead of leaving a strip beside the context panel.
+  let annotationMargin = $state(false);
 
   // Split-view sizing. splitRatio is the editor's share of the width; a
   // draggable divider adjusts it, clamped so neither pane can be squeezed away.
@@ -599,7 +603,7 @@
     {#if mode !== "source"}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="preview-pane" onclick={onPreviewClick}>
+      <div class="preview-pane" class:has-annotations={annotationMargin} onclick={onPreviewClick}>
         <Preview
           document={{ ...doc, content: buffer }}
           {capabilities}
@@ -617,6 +621,7 @@
           root={previewRoot}
           outline={doc.outline}
           {capabilities}
+          onmargin={(occupied) => (annotationMargin = occupied)}
         />
       </div>
     {/if}
@@ -855,12 +860,20 @@
     min-height: 0;
     min-width: 0;
     overflow-y: auto;
-    /* Reserve the right margin for the annotation column (R8). */
+    /* No annotation gutter by default, so an unannotated document reads at full
+       width without a dead strip beside the context panel. */
+    padding-right: 0;
+    transition: padding-right 120ms ease-out;
+  }
+
+  /* Reserve the right margin only when the annotation layer has cards or a
+     pending selection to place there (R8). */
+  .preview-pane.has-annotations {
     padding-right: 17rem;
   }
 
   @media (max-width: 1100px) {
-    .preview-pane {
+    .preview-pane.has-annotations {
       padding-right: 0;
     }
   }
