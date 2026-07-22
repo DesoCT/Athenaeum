@@ -54,12 +54,51 @@ a disposable cache: deleting it loses nothing.
   filter, and the read-only Git panel in Phase 5. Without it, search works
   unchanged and the Git filter reports itself unavailable.
 
-## Quick start
+## Install
+
+Install the latest release binary with one command — no Git, build tools, or
+root required:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DesoCT/Athenaeum/main/scripts/install.sh | sh
+```
+
+It detects your OS and architecture, downloads the newest release, installs to
+`~/.local/bin/athenaeum`, and clears the macOS quarantine attribute so it runs
+without a Gatekeeper prompt. Set `ATHENAEUM_BIN` to install elsewhere, or
+`ATHENAEUM_VERSION=v0.1.0-alpha.7` to pin a version.
+
+To build from source instead:
 
 ```bash
 make deps     # install frontend dependencies
 make build    # compile the frontend and embed it in bin/athenaeum
 ```
+
+## Generate a config
+
+Point the config generator at a directory and it inspects the tree to write a
+validated `athenaeum.toml` — Markdown-scoped, build and dependency noise
+excluded, and a document group per sub-directory that contains Markdown. It is
+pure shell, so it runs anywhere `curl` and a POSIX shell do, with no clone:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DesoCT/Athenaeum/main/scripts/athenaeum-config.sh -o athenaeum-config.sh
+chmod +x athenaeum-config.sh
+
+./athenaeum-config.sh ~/notes             # preview a config
+./athenaeum-config.sh --write ~/notes     # write ~/notes/athenaeum.toml
+./athenaeum-config.sh --help              # all options
+```
+
+A folder of repositories becomes a set of switchable workspaces (ADR-0004) in
+one command — it writes a config into each and registers them:
+
+```bash
+./athenaeum-config.sh --write --registry ~/dev/*/
+```
+
+## Quick start
 
 Athenaeum opens a folder of Markdown described by one `athenaeum.toml` beside
 it. The smallest useful file is four lines:
