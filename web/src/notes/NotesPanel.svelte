@@ -1,31 +1,24 @@
 <script lang="ts">
-  import { listNotes, createNote, getNote, ApiError } from "../api/client";
-  import type { DocumentSummary } from "../api/types";
-  import type { Note, NoteSummary, NoteLink, Visibility } from "./types";
+  import { listNotes, getNote, ApiError } from "../api/client";
+  import type { Note, NoteSummary, NoteLink } from "./types";
 
   interface Props {
-    /** Documents offered as link targets when creating a note (R9). */
-    documents: DocumentSummary[];
-    /** Bumped by the shell to force a reload after a workspace switch. */
+    /** Bumped by the shell to force a reload after a create, delete, or switch. */
     generation: number;
-    /** The open note tab, so the list can mark it active. */
+    /** The open note in the modal, so the list can mark it active. */
     activeId?: string | null;
+    /** Open an existing note in the modal editor. */
     onopen: (note: Note) => void;
+    /** Start a new note in the modal editor. */
+    onnew: () => void;
+    /** Follow a note's link to a document. */
     onopenlink: (link: NoteLink) => void;
   }
 
-  let { documents, generation, activeId = null, onopen, onopenlink }: Props = $props();
+  let { generation, activeId = null, onopen, onnew, onopenlink }: Props = $props();
 
   let notes = $state<NoteSummary[]>([]);
   let error = $state<string | null>(null);
-  let creating = $state(false);
-
-  // Draft for a new note.
-  let draftOpen = $state(false);
-  let draftTitle = $state("");
-  let draftVisibility = $state<Visibility>("personal");
-  let draftDocument = $state("");
-  let draftHeading = $state("");
 
   async function reload(): Promise<void> {
     try {
@@ -52,60 +45,12 @@
       error = err instanceof ApiError ? `${err.code}: ${err.message}` : "The note could not be opened.";
     }
   }
-
-  async function create(): Promise<void> {
-    if (draftTitle.trim() === "") {
-      error = "A note needs a title.";
-      return;
-    }
-    creating = true;
-    error = null;
-    const links: NoteLink[] = [];
-    if (draftDocument) {
-      links.push({ document: draftDocument, ...(draftHeading ? { heading: draftHeading } : {}) });
-    }
-    try {
-      const note = await createNote({ title: draftTitle.trim(), visibility: draftVisibility, body: "", links });
-      draftOpen = false;
-      draftTitle = "";
-      draftDocument = "";
-      draftHeading = "";
-      await reload();
-      onopen(note);
-    } catch (err) {
-      error = err instanceof ApiError ? `${err.code}: ${err.message}` : "The note could not be created.";
-    } finally {
-      creating = false;
-    }
-  }
 </script>
 
 <div class="notes-panel">
   <div class="panel-actions">
-    <button type="button" class="new-note" onclick={() => (draftOpen = !draftOpen)}>
-      {draftOpen ? "Cancel" : "New note"}
-    </button>
+    <button type="button" class="new-note" onclick={onnew}>New note</button>
   </div>
-
-  {#if draftOpen}
-    <form class="draft" onsubmit={(e) => { e.preventDefault(); void create(); }}>
-      <input class="field" bind:value={draftTitle} placeholder="Note title" aria-label="New note title" />
-      <select class="field" bind:value={draftVisibility} aria-label="Visibility">
-        <option value="personal">Personal (private)</option>
-        <option value="shared">Shared (committable)</option>
-      </select>
-      <select class="field" bind:value={draftDocument} aria-label="Link to document (optional)">
-        <option value="">Link to a document… (optional)</option>
-        {#each documents as doc}
-          <option value={doc.id}>{doc.title}</option>
-        {/each}
-      </select>
-      {#if draftDocument}
-        <input class="field" bind:value={draftHeading} placeholder="Heading (optional)" aria-label="Link heading" />
-      {/if}
-      <button type="submit" class="create" disabled={creating}>{creating ? "Creating…" : "Create note"}</button>
-    </form>
-  {/if}
 
   {#if error}
     <p class="error" role="status">{error}</p>
@@ -141,9 +86,7 @@
 <style>
   .notes-panel { display: flex; flex-direction: column; gap: 0.6rem; }
   .panel-actions { display: flex; }
-  .new-note, .create { padding: 0.3rem 0.7rem; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text-primary); font: inherit; font-size: 0.78rem; cursor: pointer; }
-  .draft { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.5rem; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-panel); }
-  .field { padding: 0.3rem; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text-primary); font: inherit; font-size: 0.78rem; }
+  .new-note { padding: 0.3rem 0.7rem; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text-primary); font: inherit; font-size: 0.78rem; cursor: pointer; }
   .error { margin: 0; color: var(--danger); font-size: 0.78rem; }
   .empty { margin: 0.4rem 0; color: var(--text-muted); font-size: 0.8rem; line-height: 1.4; }
   .note-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }

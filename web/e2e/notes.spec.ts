@@ -25,21 +25,21 @@ test.describe("Notes", () => {
 
   test("creates a shared note under .athenaeum/shared/notes and opens it", async ({ page }) => {
     await openNotesTab(page);
+    // "New note" opens a blank draft in the modal; the whole create flow is there.
     await page.getByRole("button", { name: "New note" }).click();
 
-    await page.getByLabel("New note title").fill("Design review");
+    await page.getByLabel("Note title").fill("Design review");
     await page.getByLabel("Visibility").selectOption("shared");
-    await page.getByRole("button", { name: "Create note" }).click();
-
-    // The note opens in a modal editor over the surface.
-    await expect(page.getByLabel("Note title")).toHaveValue("Design review");
+    await page.getByRole("button", { name: /^Save/ }).click();
 
     // The shared note file is committable and under the workspace.
     const dir = `${SCRATCH}/.athenaeum/shared/notes`;
-    expect(existsSync(dir)).toBe(true);
-    expect(readdirSync(dir).some((f) => f.endsWith(".md"))).toBe(true);
+    await expect
+      .poll(() => existsSync(dir) && readdirSync(dir).some((f) => f.endsWith(".md")))
+      .toBe(true);
 
-    // It appears in the notes list.
+    // Closing the modal, the note is in the sidebar list.
+    await page.keyboard.press("Escape");
     await expect(page.locator(".note-item-title", { hasText: "Design review" })).toBeVisible();
   });
 
@@ -47,13 +47,15 @@ test.describe("Notes", () => {
     await openNotesTab(page);
     await page.getByRole("button", { name: "New note" }).click();
 
-    await page.getByLabel("New note title").fill("Points at search");
-    await page.getByLabel("Link to document (optional)").selectOption({ label: "Note" });
+    await page.getByLabel("Note title").fill("Points at search");
+    // Add a link to the Note document at its Search heading, then save.
+    await page.getByLabel("Link a document").selectOption({ label: "Note" });
     await page.getByLabel("Link heading").fill("Search");
-    await page.getByRole("button", { name: "Create note" }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("button", { name: /^Save/ }).click();
 
     // Follow the link chip in the open note.
-    await page.locator(".link-chip", { hasText: "Search" }).click();
+    await page.locator(".chip-open", { hasText: "Search" }).click();
 
     // The linked document opens and the matched heading is revealed.
     await expect(page.locator(".preview")).toContainText("The index is disposable.");

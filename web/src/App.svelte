@@ -433,10 +433,25 @@
     void open(id);
   }
 
-  /** openNoteModal shows a note in the modal editor over the surface (R9). */
+  /** openNoteModal shows an existing note in the modal editor (R9). */
   function openNoteModal(note: Note): void {
     userActed = true;
     noteModal = note;
+  }
+
+  /** openNewNote starts a blank draft in the modal; saving creates it. */
+  function openNewNote(): void {
+    userActed = true;
+    noteModal = {
+      id: "",
+      title: "",
+      visibility: "personal",
+      created_at: "",
+      updated_at: "",
+      links: [],
+      body: "",
+      version: "",
+    };
   }
 
   /**
@@ -871,10 +886,10 @@
           {/if}
         {:else if contextTab === "notes"}
           <NotesPanel
-            {documents}
             generation={workspaceGeneration + notesReload}
             activeId={noteModal?.id ?? null}
             onopen={openNoteModal}
+            onnew={openNewNote}
             onopenlink={(link) => void openLink(link)}
           />
         {:else if contextTab === "links"}
@@ -909,6 +924,7 @@
   <NoteModal
     note={noteModal}
     capabilities={workspace.capabilities}
+    {documents}
     onclose={() => (noteModal = null)}
     onopenlink={(link) => void openLink(link)}
     onchanged={() => (notesReload += 1)}
