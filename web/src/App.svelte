@@ -31,8 +31,9 @@
   import QuickOpen from "./map-room/QuickOpen.svelte";
   import MapRoomHome from "./map-room/MapRoomHome.svelte";
   import WorkspacePicker from "./map-room/WorkspacePicker.svelte";
+  import WorkspaceMenu from "./map-room/WorkspaceMenu.svelte";
   import DocumentView from "./editor/DocumentView.svelte";
-  import NoteView from "./notes/NoteView.svelte";
+  import NoteModal from "./notes/NoteModal.svelte";
   import NotesPanel from "./notes/NotesPanel.svelte";
   import RelationshipsPanel from "./relationships/RelationshipsPanel.svelte";
   import GitPanel from "./git/GitPanel.svelte";
@@ -88,10 +89,9 @@
    */
   let openTabs = $state<string[]>([]);
   let loadedDocs = $state<Record<string, DocumentDetail>>({});
-  // Open note tabs, keyed by their tab id ("note:<visibility>:<id>"). Notes and
-  // documents share one tab list, distinguished by the id prefix, so the tab
-  // strip, close, and switch logic serve both (R9).
-  let loadedNotes = $state<Record<string, Note>>({});
+  // The note being worked on, shown in a modal over the document surface (R9).
+  // Notes are free-standing, so they overlay rather than joining the tab strip.
+  let noteModal = $state<Note | null>(null);
   /** Which context-panel tab is showing: outline, notes, links, or git. */
   let contextTab = $state<"outline" | "notes" | "links" | "git">("outline");
   /** Bumped to make the notes panel re-read after a create or delete. */
@@ -154,25 +154,12 @@
   }
 
   const tabDescriptors = $derived(
-    openTabs.map((id) =>
-      isNoteTab(id)
-        ? { documentId: id, title: loadedNotes[id]?.title ?? "Note", dirty: dirtyDocs[id] === true }
-        : {
-            documentId: id,
-            title: loadedDocs[id]?.title ?? documents.find((d) => d.id === id)?.title ?? id,
-            dirty: dirtyDocs[id] === true,
-          },
-    ),
+    openTabs.map((id) => ({
+      documentId: id,
+      title: loadedDocs[id]?.title ?? documents.find((d) => d.id === id)?.title ?? id,
+      dirty: dirtyDocs[id] === true,
+    })),
   );
-
-  /** A tab id names a note when it carries the note prefix. */
-  function isNoteTab(id: string): boolean {
-    return id.startsWith("note:");
-  }
-
-  function noteTabId(note: { visibility: string; id: string }): string {
-    return `note:${note.visibility}:${note.id}`;
-  }
 
   // Unsaved buffers found at startup. They are offered, never applied (E3).
   let recoveryBuffers = $state<RecoveryBuffer[]>([]);
@@ -283,6 +270,7 @@
     docError = null;
     highlightLine = null;
     quickOpenVisible = false;
+    noteModal = null;
     openTabs = [];
     loadedDocs = {};
     tabView = {};
@@ -428,27 +416,27 @@
     }
   }
 
-  /** activateTab switches to a tab, fetching a document tab's content lazily. */
+  /** reorderTabs moves one tab to the position of another (drag to reorder). */
+  function reorderTabs(fromId: string, toId: string): void {
+    const from = openTabs.indexOf(fromId);
+    const to = openTabs.indexOf(toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = [...openTabs];
+    next.splice(from, 1);
+    next.splice(to, 0, fromId);
+    openTabs = next;
+    userActed = true;
+  }
+
+  /** activateTab switches to a document tab, fetching its content lazily. */
   function activateTab(id: string): void {
-    if (isNoteTab(id)) {
-      userActed = true;
-      activeId = id;
-      docError = null;
-      return;
-    }
     void open(id);
   }
 
-  /** openNoteTab opens a note in the main surface, reusing the tab system. */
-  function openNoteTab(note: Note): void {
+  /** openNoteModal shows a note in the modal editor over the surface (R9). */
+  function openNoteModal(note: Note): void {
     userActed = true;
-    const id = noteTabId(note);
-    loadedNotes = { ...loadedNotes, [id]: note };
-    if (!openTabs.includes(id)) {
-      openTabs = [...openTabs, id].slice(-MAX_TABS);
-    }
-    activeId = id;
-    docError = null;
+    noteModal = note;
   }
 
   /**
@@ -478,20 +466,13 @@
   function closeTab(id: string): void {
     userActed = true;
     openTabs = openTabs.filter((entry) => entry !== id);
-    // Only documents are reopenable from history; a note reopens from its panel,
-    // and reopening a note id through the document path would try to fetch it as
-    // a document.
-    if (!isNoteTab(id)) {
-      closedTabs = [id, ...closedTabs.filter((entry) => entry !== id)].slice(0, 10);
-    }
+    closedTabs = [id, ...closedTabs.filter((entry) => entry !== id)].slice(0, 10);
 
     // Dropping the loaded document releases its buffer. That is safe only
     // because closing is an explicit action and the recovery store already
     // holds anything unsaved (acceptance E3).
     const { [id]: _dropped, ...rest } = loadedDocs;
     loadedDocs = rest;
-    const { [id]: _note, ...restNotes } = loadedNotes;
-    loadedNotes = restNotes;
     delete dirtyDocs[id];
     delete tabView[id];
     // The restored view state has served its purpose. Keeping it would make a
@@ -561,17 +542,13 @@
     sessionTimer = setTimeout(() => {
       void saveSession({
         schema_version: 1,
-        // Only documents are restored across sessions; note tabs reopen from the
-        // notes panel, and a note id is not a document the restore path can read.
-        tabs: openTabs
-          .filter((id) => !isNoteTab(id))
-          .map((id) => ({
-            document_id: id,
-            mode: tabView[id]?.mode ?? "split",
-            preview_scroll: tabView[id]?.previewScroll ?? 0,
-            source_line: tabView[id]?.sourceLine ?? 0,
-          })),
-        active_document: activeId && !isNoteTab(activeId) ? activeId : undefined,
+        tabs: openTabs.map((id) => ({
+          document_id: id,
+          mode: tabView[id]?.mode ?? "split",
+          preview_scroll: tabView[id]?.previewScroll ?? 0,
+          source_line: tabView[id]?.sourceLine ?? 0,
+        })),
+        active_document: activeId ?? undefined,
         recent,
         layout,
       });
@@ -694,12 +671,17 @@
 
     <div class="bar-actions">
       {#if registry}
-        <!-- The way back to the picker (ADR-0004). Present only when a registry
-             launcher exists; a process launched with a bare path has nowhere to
-             return to. -->
-        <button type="button" class="quick-open-trigger" onclick={() => void backToPicker()}>
-          Workspaces
-        </button>
+        <!-- A switcher, not a leave (ADR-0004). Clicking a workspace switches to
+             it directly; the picker stays available as an explicit choice inside
+             the menu, so this button can no longer strand a session on an empty
+             picker. Present only when a registry launcher exists. -->
+        <WorkspaceMenu
+          {registry}
+          busy={pickerBusy}
+          onchoose={(name) => void chooseWorkspace(name)}
+          onpicker={() => void backToPicker()}
+          onreload={() => void refreshRegistry()}
+        />
       {/if}
       <button type="button" class="quick-open-trigger" onclick={() => (quickOpenVisible = true)}>
         Quick open <kbd>⌘P</kbd>
@@ -764,6 +746,7 @@
         {activeId}
         onselect={activateTab}
         onclose={closeTab}
+        onreorder={reorderTabs}
       />
       {#if load.kind === "error"}
         <section class="card error">
@@ -809,19 +792,7 @@
         <!-- Every loaded tab stays mounted; only the active one renders, so an
              unsaved buffer survives a tab switch. -->
         {#each openTabs as id (id)}
-          {#if isNoteTab(id) && loadedNotes[id]}
-            <NoteView
-              note={loadedNotes[id]}
-              capabilities={workspace.capabilities}
-              active={id === activeId && !docError}
-              onopenlink={(link) => void openLink(link)}
-              ondirty={(dirty) => recordDirty(id, dirty)}
-              onclosed={() => {
-                closeTab(id);
-                notesReload += 1;
-              }}
-            />
-          {:else if loadedDocs[id]}
+          {#if loadedDocs[id]}
             <DocumentView
               document={loadedDocs[id]}
               capabilities={workspace.capabilities}
@@ -902,19 +873,19 @@
           <NotesPanel
             {documents}
             generation={workspaceGeneration + notesReload}
-            activeId={activeId && isNoteTab(activeId) ? activeId.split(":").slice(2).join(":") : null}
-            onopen={openNoteTab}
+            activeId={noteModal?.id ?? null}
+            onopen={openNoteModal}
             onopenlink={(link) => void openLink(link)}
           />
         {:else if contextTab === "links"}
           <RelationshipsPanel
-            documentId={activeId && !isNoteTab(activeId) ? activeId : null}
+            documentId={activeId}
             generation={workspaceGeneration + relationshipsGen}
             onopen={(id) => void open(id)}
           />
         {:else}
           <GitPanel
-            documentId={activeId && !isNoteTab(activeId) ? activeId : null}
+            documentId={activeId}
             generation={workspaceGeneration + relationshipsGen}
           />
         {/if}
@@ -931,6 +902,16 @@
     {documents}
     onopen={(id) => void open(id)}
     onclose={() => (quickOpenVisible = false)}
+  />
+{/if}
+
+{#if noteModal && workspace}
+  <NoteModal
+    note={noteModal}
+    capabilities={workspace.capabilities}
+    onclose={() => (noteModal = null)}
+    onopenlink={(link) => void openLink(link)}
+    onchanged={() => (notesReload += 1)}
   />
 {/if}
 

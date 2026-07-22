@@ -16,9 +16,22 @@
     activeId: string | null;
     onselect: (documentId: string) => void;
     onclose: (documentId: string) => void;
+    /** Moves the dragged tab to the position of the tab it was dropped on. */
+    onreorder?: (fromId: string, toId: string) => void;
   }
 
-  let { tabs, activeId, onselect, onclose }: Props = $props();
+  let { tabs, activeId, onselect, onclose, onreorder }: Props = $props();
+
+  // Drag-to-reorder state. `dragging` is the id being moved; `over` is the tab
+  // currently under the pointer, for a drop-target highlight.
+  let dragging = $state<string | null>(null);
+  let over = $state<string | null>(null);
+
+  function onDrop(toId: string): void {
+    if (dragging && dragging !== toId) onreorder?.(dragging, toId);
+    dragging = null;
+    over = null;
+  }
 
   function onkeydown(event: KeyboardEvent, index: number): void {
     if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
@@ -32,7 +45,35 @@
 {#if tabs.length > 0}
   <div class="tab-strip" role="tablist" aria-label="Open documents">
     {#each tabs as tab, index (tab.documentId)}
-      <div class="tab" class:active={tab.documentId === activeId}>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="tab"
+        class:active={tab.documentId === activeId}
+        class:dragging={dragging === tab.documentId}
+        class:over={over === tab.documentId && dragging !== tab.documentId}
+        draggable={onreorder != null}
+        ondragstart={(e) => {
+          dragging = tab.documentId;
+          e.dataTransfer?.setData("text/plain", tab.documentId);
+          if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+        }}
+        ondragover={(e) => {
+          if (!dragging) return;
+          e.preventDefault();
+          over = tab.documentId;
+        }}
+        ondragleave={() => {
+          if (over === tab.documentId) over = null;
+        }}
+        ondrop={(e) => {
+          e.preventDefault();
+          onDrop(tab.documentId);
+        }}
+        ondragend={() => {
+          dragging = null;
+          over = null;
+        }}
+      >
         <button
           type="button"
           role="tab"
@@ -93,6 +134,19 @@
   .tab.active {
     background: var(--surface-raised);
     box-shadow: inset 0 2px 0 var(--accent);
+  }
+
+  .tab[draggable="true"] {
+    cursor: grab;
+  }
+
+  .tab.dragging {
+    opacity: 0.4;
+  }
+
+  /* A drop-target marker on the left edge of the tab being hovered. */
+  .tab.over {
+    box-shadow: inset 2px 0 0 var(--accent);
   }
 
   .label {
