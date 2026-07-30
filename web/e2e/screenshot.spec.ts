@@ -41,6 +41,16 @@ test.describe("Map Room", () => {
       throw new Error(`page error: ${error.message}`);
     });
 
+    // Force the immediate comment form on selection, so the annotation
+    // screenshot below can create one without the intermediate button.
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("athenaeum.settings.v1", JSON.stringify({ annotateOn: "popover" }));
+      } catch {
+        /* storage unavailable */
+      }
+    });
+
     await page.goto(BOOTSTRAP!);
 
     // These checks describe a first launch, and since R13 the Map Room reopens
@@ -150,5 +160,37 @@ test.describe("Map Room", () => {
     await page.setViewportSize({ width: 800, height: 900 });
     await page.screenshot({ path: "e2e/screenshots/05-narrow.png" });
     await expect(page.getByRole("main")).toBeVisible();
+  });
+
+  test("a comment anchored in the margin", async ({ page }) => {
+    await openDocument(page, "architecture");
+    // Select a paragraph in the preview and comment on it.
+    await page.locator(".preview p").first().click({ clickCount: 3 });
+    const column = page.locator(".annotation-column");
+    await column.getByPlaceholder("Add a comment…").fill("Worth clarifying the cache authority here.");
+    await column.locator(".draft-card").getByRole("button", { name: "Save" }).click();
+    await expect(column.locator(".ann-card").filter({ hasText: "cache authority" })).toBeVisible();
+    await page.screenshot({ path: "e2e/screenshots/10-annotation.png", fullPage: false });
+  });
+
+  test("the read-only Git panel", async ({ page }) => {
+    await openDocument(page, "architecture");
+    await page.getByRole("button", { name: "Git", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Working-tree diff" })).toBeVisible();
+    await page.screenshot({ path: "e2e/screenshots/11-git.png", fullPage: false });
+  });
+
+  test("the context panel popped out", async ({ page }) => {
+    await openDocument(page, "architecture");
+    await page.getByRole("button", { name: "Git", exact: true }).click();
+    await page.getByRole("button", { name: /Pop out/ }).click();
+    await expect(page.getByRole("dialog", { name: "Context panel" })).toBeVisible();
+    await page.screenshot({ path: "e2e/screenshots/12-context-popout.png", fullPage: false });
+  });
+
+  test("the settings menu", async ({ page }) => {
+    await page.getByRole("button", { name: "Settings" }).click();
+    await expect(page.getByText("Interface size")).toBeVisible();
+    await page.screenshot({ path: "e2e/screenshots/13-settings.png", fullPage: false });
   });
 });

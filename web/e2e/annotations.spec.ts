@@ -17,6 +17,15 @@ test.describe("Annotations", () => {
     // A fresh document and no prior shared sidecar, so each run starts clean.
     writeFileSync(`${SCRATCH}/docs/note.md`, "# Note\n\nThe index is a disposable cache.\n");
     rmSync(`${SCRATCH}/.athenaeum`, { recursive: true, force: true });
+    // Force the immediate comment form on selection; the default is now the
+    // less intrusive "button", which these tests do not exercise.
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("athenaeum.settings.v1", JSON.stringify({ annotateOn: "popover" }));
+      } catch {
+        /* storage unavailable */
+      }
+    });
     await page.goto(BOOTSTRAP!);
   });
 
