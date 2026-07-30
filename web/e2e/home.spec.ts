@@ -15,6 +15,15 @@ test.describe("Map Room home", () => {
   test.beforeEach(async ({ page }) => {
     writeFileSync(`${SCRATCH}/docs/note.md`, "# Note\n\nThe index is a disposable cache.\n");
     rmSync(`${SCRATCH}/.athenaeum`, { recursive: true, force: true });
+    // Open the comment form directly on selection, rather than the default
+    // "button", which this test does not click.
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("athenaeum.settings.v1", JSON.stringify({ annotateOn: "popover" }));
+      } catch {
+        /* storage unavailable */
+      }
+    });
     await page.goto(BOOTSTRAP!);
   });
 
