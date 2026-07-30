@@ -29,6 +29,8 @@
     ondock: (dock: Dock) => void;
     onpopout: () => void;
     onclose: () => void;
+    /** Hide the panel entirely (docked view). */
+    onhide: () => void;
   }
 
   let {
@@ -49,6 +51,7 @@
     ondock,
     onpopout,
     onclose,
+    onhide,
   }: Props = $props();
 
   const tabs: { value: Tab; label: string; show: boolean }[] = $derived([
@@ -83,6 +86,7 @@
         Bottom
       </button>
       <button type="button" class="tool" title="Pop out into a window" onclick={onpopout}>Pop out ⤢</button>
+      <button type="button" class="tool" title="Hide the context sidebar (⌘⇧B)" aria-label="Hide the context sidebar" onclick={onhide}>Hide ×</button>
     {/if}
   </div>
 
