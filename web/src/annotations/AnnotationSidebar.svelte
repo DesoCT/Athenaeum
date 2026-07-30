@@ -112,6 +112,7 @@
   function openDraft(anchor: AnchorInput): void {
     draftAnchor = anchor;
     draftBody = "";
+    draftVisibility = settings.defaultVisibility;
     draftTop = anchorTop(anchor.start_line ?? 1);
     pendingAnchor = null;
   }

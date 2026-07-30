@@ -35,6 +35,7 @@
   import ScaffoldModal from "./map-room/ScaffoldModal.svelte";
   import { scaffoldWorkspace, type Scaffold } from "./map-room/scaffold";
   import SettingsMenu from "./settings/SettingsMenu.svelte";
+  import { settings } from "./settings/settings.svelte";
   import DocumentView from "./editor/DocumentView.svelte";
   import NoteModal from "./notes/NoteModal.svelte";
   import NotesPanel from "./notes/NotesPanel.svelte";
@@ -459,7 +460,7 @@
     noteModal = {
       id: "",
       title: "",
-      visibility: "personal",
+      visibility: settings.defaultVisibility,
       created_at: "",
       updated_at: "",
       links: [],
