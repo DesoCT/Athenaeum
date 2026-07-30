@@ -543,6 +543,21 @@
     layout = { ...layout, search: false };
   }
 
+  /** Show or hide the left navigation sidebar (file tree / search). */
+  function toggleNavigation(): void {
+    userActed = true;
+    layout = { ...layout, navigation: !layout.navigation };
+  }
+
+  /** Show or hide the right context sidebar (outline / notes / links / git). */
+  function toggleContext(): void {
+    userActed = true;
+    const next = !layout.context;
+    layout = { ...layout, context: next };
+    // A hidden panel cannot also be popped out.
+    if (!next) contextPopped = false;
+  }
+
   function onkeydown(event: KeyboardEvent): void {
     if (event.key === "Escape" && contextPopped) {
       contextPopped = false;
@@ -566,6 +581,18 @@
     if (key === "w" && !event.shiftKey) {
       event.preventDefault();
       if (activeId) closeTab(activeId);
+      return;
+    }
+    // ⌘B / ⌘⇧B hide the sidebars for a focused, page-only view. Hide both to
+    // get "just the page"; either one on its own works too.
+    if (key === "b" && !event.shiftKey) {
+      event.preventDefault();
+      toggleNavigation();
+      return;
+    }
+    if (key === "b" && event.shiftKey) {
+      event.preventDefault();
+      toggleContext();
       return;
     }
     if (key === "t" && event.shiftKey) {
@@ -735,11 +762,42 @@
       <button type="button" class="quick-open-trigger" onclick={showSearch}>
         Search <kbd>⌘⇧F</kbd>
       </button>
+      <div class="panel-toggles" role="group" aria-label="Panels">
+        <button
+          type="button"
+          class="panel-toggle"
+          class:active={layout.navigation}
+          aria-pressed={layout.navigation}
+          title="Toggle files sidebar (⌘B)"
+          aria-label="Toggle files sidebar"
+          onclick={toggleNavigation}
+        >
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.3" />
+            <rect x="2.5" y="3.6" width="3.3" height="8.8" rx="0.6" fill="currentColor" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="panel-toggle"
+          class:active={layout.context}
+          aria-pressed={layout.context}
+          title="Toggle context sidebar (⌘⇧B)"
+          aria-label="Toggle context sidebar"
+          onclick={toggleContext}
+        >
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.3" />
+            <rect x="10.2" y="3.6" width="3.3" height="8.8" rx="0.6" fill="currentColor" />
+          </svg>
+        </button>
+      </div>
       <SettingsMenu />
     </div>
   </header>
 
-  <div class="body" class:two-col={!showRightContext}>
+  <div class="body" class:two-col={!showRightContext} class:no-nav={!layout.navigation}>
+    {#if layout.navigation}
     <nav class="panel navigation" aria-label="Workspace navigation">
       <div class="nav-switch" role="group" aria-label="Navigation view">
         <button
@@ -787,6 +845,7 @@
         <p class="pending">Loading…</p>
       {/if}
     </nav>
+    {/if}
 
     <main class="document-surface" aria-label="Document surface">
       <TabStrip
@@ -937,6 +996,7 @@
     ondock={setDock}
     onpopout={() => (contextPopped = true)}
     onclose={() => (contextPopped = false)}
+    onhide={toggleContext}
   />
 {/snippet}
 
@@ -1047,6 +1107,35 @@
     color: var(--text-primary);
   }
 
+  .panel-toggles {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .panel-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.4rem;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    /* Off by default: the icon reads as muted until the panel is shown. */
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .panel-toggle:hover {
+    border-color: var(--focus);
+    color: var(--text-secondary);
+  }
+
+  /* Pressed = the panel is visible; the mark takes the accent. */
+  .panel-toggle.active {
+    color: var(--accent);
+    border-color: var(--line-strong);
+  }
+
   kbd {
     font-family: var(--font-mono);
     font-size: 0.75rem;
@@ -1062,6 +1151,16 @@
   /* No right column when the context panel is docked bottom, popped out, or hidden. */
   .body.two-col {
     grid-template-columns: 17rem 1fr;
+  }
+
+  /* The left navigation sidebar hidden: the document surface takes its space. */
+  .body.no-nav {
+    grid-template-columns: 1fr 16rem;
+  }
+
+  /* Both sidebars hidden — just the page. */
+  .body.no-nav.two-col {
+    grid-template-columns: 1fr;
   }
 
   /* The context panel docked along the bottom: full width, its own scroll. */
