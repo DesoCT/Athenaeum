@@ -164,6 +164,12 @@ test.describe("Map Room", () => {
 
   test("a comment anchored in the margin", async ({ page }) => {
     await openDocument(page, "architecture");
+    // Preview mode gives the annotation margin its full width, so the card
+    // sits cleanly beside the text rather than over a narrow split pane.
+    await page
+      .getByRole("group", { name: "View mode" })
+      .getByRole("button", { name: "Preview", exact: true })
+      .click();
     // Select a paragraph in the preview and comment on it.
     await page.locator(".preview p").first().click({ clickCount: 3 });
     const column = page.locator(".annotation-column");
@@ -174,7 +180,14 @@ test.describe("Map Room", () => {
   });
 
   test("the read-only Git panel", async ({ page }) => {
+    // The Git panel reports the working-tree diff of the open document, so this
+    // capture targets a doc with an uncommitted edit (made on disk by the
+    // screenshot runner) shown in full-width preview.
     await openDocument(page, "architecture");
+    await page
+      .getByRole("group", { name: "View mode" })
+      .getByRole("button", { name: "Preview", exact: true })
+      .click();
     await page.getByRole("button", { name: "Git", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Working-tree diff" })).toBeVisible();
     await page.screenshot({ path: "e2e/screenshots/11-git.png", fullPage: false });
@@ -192,5 +205,40 @@ test.describe("Map Room", () => {
     await page.getByRole("button", { name: "Settings" }).click();
     await expect(page.getByText("Interface size")).toBeVisible();
     await page.screenshot({ path: "e2e/screenshots/13-settings.png", fullPage: false });
+  });
+
+  test("split editing: source beside live preview", async ({ page }) => {
+    await openDocument(page, "architecture");
+    const modes = page.getByRole("group", { name: "View mode" });
+    await modes.getByRole("button", { name: "Split", exact: true }).click();
+    // Both panes present: the source editor (a plain textarea) and the preview.
+    await expect(page.locator(".editor-pane textarea")).toBeVisible();
+    await expect(page.locator(".preview")).toBeVisible();
+    await page.waitForTimeout(2500); // lazy Mermaid and highlighting in the preview
+    await page.screenshot({ path: "e2e/screenshots/20-split-editing.png", fullPage: false });
+  });
+
+  test("a rendered document in preview", async ({ page }) => {
+    await openDocument(page, "architecture");
+    await page
+      .getByRole("group", { name: "View mode" })
+      .getByRole("button", { name: "Preview", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: /System Architecture/i, level: 1 }),
+    ).toBeVisible();
+    await expect(page.locator(".mermaid-block svg").first()).toBeVisible({ timeout: 15000 });
+    await page.waitForTimeout(1500); // settle highlighting
+    await page.screenshot({ path: "e2e/screenshots/21-document.png", fullPage: false });
+  });
+
+  test("workspace search with results", async ({ page }) => {
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    const field = page.getByLabel("Search query");
+    await expect(field).toBeVisible();
+    await field.fill("workspace");
+    // Wait for the lexical index to return at least one hit.
+    await expect(page.getByRole("listbox", { name: "Search results" }).getByRole("option").first()).toBeVisible();
+    await page.screenshot({ path: "e2e/screenshots/22-search.png", fullPage: false });
   });
 });
