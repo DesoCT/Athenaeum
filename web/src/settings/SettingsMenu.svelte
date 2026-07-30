@@ -173,20 +173,25 @@
 <svelte:window onkeydown={(e) => e.key === "Escape" && (open = false)} />
 
 <style>
-  .settings { position: relative; }
+  /* A flex wrapper so the trigger stretches to the height of the other
+     command-bar buttons (Search, Quick open), which are taller because they
+     carry text; the gear alone would otherwise sit in a smaller box. */
+  .settings { position: relative; display: flex; }
   .trigger {
     display: flex;
     align-items: center;
-    padding: 0.25rem 0.55rem;
+    justify-content: center;
+    padding: 0.25rem 0.7rem;
     border: 1px solid var(--line-strong);
     border-radius: var(--radius);
     background: var(--surface-raised);
     color: var(--text-secondary);
     font: inherit;
+    font-size: 0.8rem;
     cursor: pointer;
   }
   .trigger:hover { border-color: var(--focus); color: var(--text-primary); }
-  .gear { font-size: 0.95rem; line-height: 1; }
+  .gear { font-size: 1rem; line-height: 1; }
   .backdrop { position: fixed; inset: 0; z-index: 20; border: 0; background: none; cursor: default; }
   .panel {
     position: absolute;
