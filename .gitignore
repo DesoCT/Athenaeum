@@ -31,3 +31,5 @@
 # Playwright
 /web/test-results/
 /web/playwright-report/
+# Screenshot captures are build artifacts; curated ones live in docs/screenshots/.
+/web/e2e/screenshots/
