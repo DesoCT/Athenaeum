@@ -1,31 +1,37 @@
 # Athenaeum
 
-A lightweight, local-first developer command centre for reading, editing,
-annotating, navigating, and understanding configured Markdown workspaces. The
-primary workspace experience is called the **Map Room**.
+**A local-first command centre for your Markdown.** Read, edit, search,
+annotate, and navigate a folder of Markdown from a single binary — richly
+rendered, with comments, notes, and backlinks. No language model, no API key, no
+network. The workspace itself is the **Map Room**.
 
-Athenaeum is not a chat product, a memory system, a semantic knowledge graph, a
-collaboration service, a cloud service, a WYSIWYG editor, or a Git client. It is
-useful with no language model, no API key, and no internet connection.
+Athenaeum is deliberately *not* a chat product, a knowledge graph, a WYSIWYG
+editor, or a cloud service. Your files stay plain Markdown on your disk —
+authoritative, and yours.
 
-**Status:** v0.1 feature-complete, published as tagged alpha releases while it
-settles. Every phase of the delivery plan is in: the repository foundation;
-workspace loading and the Map Room; editing with atomic saves and crash
-recovery; workspace search with session restoration; the annotation layer —
-anchored comments and pins with repair, personal and shared notes, explicit
-relationships with backlinks, and pin, unresolved, and changed-file summaries on
-the Map Room home; the read-only Git panel (status, working-tree diff, history,
-and blame, through an enforced allow-list that can reach no mutating command);
-and remote-mode hardening — token authentication, origin controls, and a guard
-that refuses to downgrade data written by a newer version. Releases are
-cross-compiled for macOS and Linux and installable with the one-liner below.
+```bash
+curl -fsSL https://raw.githubusercontent.com/DesoCT/Athenaeum/main/scripts/install.sh | sh
+```
 
-The one deliberate gap before a final v0.1 is code signing: the release binaries
-are unsigned, so a browser-downloaded macOS build needs the quarantine attribute
-cleared (the installer does this for you).
+## Highlights
 
-Measured startup, responsiveness, and scale numbers are in
-[docs/measurements.md](docs/measurements.md).
+- **Rich, safe rendering** — GitHub-Flavoured Markdown with callouts, math,
+  Mermaid, wiki links, and syntax highlighting; sanitised, with raw HTML off by
+  default.
+- **Edit with confidence** — source and live preview side by side, atomic saves,
+  crash recovery, and conflict protection when a file changes under you.
+- **Annotate without touching your files** — comments and pins anchored to a
+  selection or heading, personal or shared, that repair themselves after edits.
+  Free-standing notes, too.
+- **See the connections** — backlinks and outgoing links from Markdown, wiki,
+  front-matter, and sidecar relationships. Nothing is ever inferred.
+- **Read-only Git** — status, working-tree diff, history, and blame, through an
+  allow-list that can reach no mutating command.
+- **Fast, and local** — full-text search across thousands of documents, startup
+  in tens of milliseconds, all offline with no account.
+
+**Status:** v0.1, shipping as tagged alpha releases. Startup, responsiveness, and
+scale numbers are in [docs/measurements.md](docs/measurements.md).
 
 ## Screenshots
 
@@ -54,26 +60,21 @@ a disposable cache: deleting it loses nothing.
 
 ## Requirements
 
+The installed binary needs nothing but itself. These are for building from source:
+
 - Go 1.26 or newer
 - Node.js 22 or newer — build time only; the release binary needs neither
   Node.js nor npm
-- `git` on PATH — optional. It supplies per-file state for the search Git
-  filter, and the read-only Git panel in Phase 5. Without it, search works
-  unchanged and the Git filter reports itself unavailable.
+- `git` on PATH — optional. It powers the read-only Git panel and the search
+  Git-state filter. Without it, everything else works unchanged and the Git
+  features report themselves unavailable.
 
 ## Install
 
-Install the latest release binary with one command — no Git, build tools, or
-root required:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/DesoCT/Athenaeum/main/scripts/install.sh | sh
-```
-
-It detects your OS and architecture, downloads the newest release, installs to
-`~/.local/bin/athenaeum`, and clears the macOS quarantine attribute so it runs
-without a Gatekeeper prompt. Set `ATHENAEUM_BIN` to install elsewhere, or
-`ATHENAEUM_VERSION=v0.1.0-alpha.7` to pin a version.
+The one-liner above installs the newest release to `~/.local/bin/athenaeum` — no
+Go, Node, or root — detecting your OS and architecture and clearing the macOS
+quarantine so it runs without a Gatekeeper prompt. Set `ATHENAEUM_BIN` to install
+elsewhere, or `ATHENAEUM_VERSION` to pin a version.
 
 To build from source instead:
 
