@@ -2,7 +2,9 @@ import { defineConfig } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
 export default defineConfig({
-  plugins: [svelte({ hot: false })],
+  // HMR is off under the test runner already; vite-plugin-svelte 7 removed the
+  // explicit `hot` option, so passing it is now an "invalid option" warning.
+  plugins: [svelte()],
   test: {
     // The renderer manipulates DOM during sanitisation and heading
     // reconciliation, so tests need a document.
