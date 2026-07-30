@@ -14,6 +14,7 @@
   import ConflictView from "./ConflictView.svelte";
   import Preview from "../renderer/Preview.svelte";
   import AnnotationSidebar from "../annotations/AnnotationSidebar.svelte";
+  import { settings } from "../settings/settings.svelte";
 
   interface Props {
     document: DocumentDetail;
@@ -79,8 +80,9 @@
   /** View modes (spec 04 section 6). Split is the default. */
   type Mode = "split" | "source" | "preview";
   /* svelte-ignore state_referenced_locally */
-  let mode = $state<Mode>(restoreMode ?? "split");
-  let wrap = $state(true);
+  let mode = $state<Mode>(restoreMode ?? settings.defaultView);
+  /* svelte-ignore state_referenced_locally */
+  let wrap = $state(settings.wrapLines);
 
   // Session bookkeeping (R13). These track the live view so the shell can
   // persist it without reaching into this component.
@@ -172,8 +174,8 @@
       lastLoadedId = doc.id;
       seed(restoredContent ?? doc.content, doc.version, restoredContent != null);
       // A different document adopts its own restored view state, falling back
-      // to the split default (spec 04 section 6, R13).
-      mode = restoreMode ?? "split";
+      // to the configured default view (spec 04 section 6, R13).
+      mode = restoreMode ?? settings.defaultView;
       previewScroll = restoreScroll ?? 0;
       sourceLine = restoreLine ?? 0;
       pendingScroll = restoreScroll;

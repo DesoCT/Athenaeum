@@ -9,6 +9,7 @@
   } from "../api/client";
   import { render } from "../renderer/renderer";
   import { selectionAnchor } from "./anchor";
+  import { settings } from "../settings/settings.svelte";
   import type { Annotation, AnnotationList, AnchorInput, Visibility, AnnotationKind } from "./types";
   import type { Capabilities, Heading } from "../api/types";
 
@@ -34,6 +35,11 @@
 
   // A pending anchor is a live selection the user may turn into an annotation.
   let draftAnchor = $state<AnchorInput | null>(null);
+  // A selection waiting for the user to click "Comment" (the "button" trigger),
+  // so selecting text to copy does not open a form (settings.annotateOn).
+  let pendingAnchor = $state<AnchorInput | null>(null);
+  let pendingTop = $state(0);
+  let pendingLeft = $state(0);
   let draftTop = $state(0);
   let draftBody = $state("");
   let draftVisibility = $state<Visibility>("personal");
@@ -75,23 +81,52 @@
   });
 
   // Observe selections in the rendered article. mouseup is enough: a selection
-  // is complete when the pointer is released.
+  // is complete when the pointer is released. How a selection becomes a comment
+  // is a preference (settings.annotateOn): open the form immediately, offer a
+  // small button, or do nothing so text can be copied undisturbed.
   $effect(() => {
     const el = root;
     if (!el) return;
     const onMouseUp = () => {
-      const anchor = selectionAnchor(el, outline);
-      if (!anchor) {
-        draftAnchor = null;
+      if (settings.annotateOn === "off") {
+        pendingAnchor = null;
         return;
       }
-      draftAnchor = anchor;
-      draftBody = "";
-      draftTop = anchorTop(anchor.start_line ?? 1);
+      const anchor = selectionAnchor(el, outline);
+      if (!anchor) {
+        pendingAnchor = null;
+        return;
+      }
+      if (settings.annotateOn === "popover") {
+        openDraft(anchor);
+      } else {
+        // "button": show an unobtrusive Comment button by the selection.
+        pendingAnchor = anchor;
+        positionButton(el);
+      }
     };
     el.addEventListener("mouseup", onMouseUp);
     return () => el.removeEventListener("mouseup", onMouseUp);
   });
+
+  function openDraft(anchor: AnchorInput): void {
+    draftAnchor = anchor;
+    draftBody = "";
+    draftTop = anchorTop(anchor.start_line ?? 1);
+    pendingAnchor = null;
+  }
+
+  // Position the Comment button at the top-left of the current selection,
+  // relative to the scrolling preview pane so it tracks the text.
+  function positionButton(el: HTMLElement): void {
+    const sel = window.getSelection();
+    const pane = el.parentElement;
+    if (!sel || sel.rangeCount === 0 || !pane) return;
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    const paneRect = pane.getBoundingClientRect();
+    pendingTop = rect.top - paneRect.top + pane.scrollTop - 30;
+    pendingLeft = Math.max(4, rect.left - paneRect.left);
+  }
 
   /** blockFor finds the rendered block that begins at or before a source line. */
   function blockFor(line: number): HTMLElement | null {
@@ -311,6 +346,19 @@
   {/if}
 </div>
 
+{#if pendingAnchor && settings.annotateOn === "button" && !draftAnchor}
+  <!-- A separate root element so its offset parent is the scrolling pane, not
+       the right-aligned annotation column. -->
+  <button
+    type="button"
+    class="comment-fab"
+    style="top: {pendingTop}px; left: {pendingLeft}px"
+    onclick={() => pendingAnchor && openDraft(pendingAnchor)}
+  >
+    💬 Comment
+  </button>
+{/if}
+
 {#snippet card(ann: Annotation, isDetached: boolean)}
   <article
     class="ann-card"
@@ -340,6 +388,27 @@
 {/snippet}
 
 <style>
+  /* The floating "Comment" button shown by a selection in "button" mode. */
+  .comment-fab {
+    position: absolute;
+    z-index: 5;
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: var(--surface-raised);
+    color: var(--accent);
+    font: inherit;
+    font-size: 0.72rem;
+    white-space: nowrap;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+  }
+
+  .comment-fab:hover {
+    background: var(--accent);
+    color: var(--surface-base, #fff);
+  }
+
   .annotation-column {
     position: absolute;
     top: 0;

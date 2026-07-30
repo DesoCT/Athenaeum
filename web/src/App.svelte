@@ -34,6 +34,7 @@
   import WorkspaceMenu from "./map-room/WorkspaceMenu.svelte";
   import ScaffoldModal from "./map-room/ScaffoldModal.svelte";
   import { scaffoldWorkspace, type Scaffold } from "./map-room/scaffold";
+  import SettingsMenu from "./settings/SettingsMenu.svelte";
   import DocumentView from "./editor/DocumentView.svelte";
   import NoteModal from "./notes/NoteModal.svelte";
   import NotesPanel from "./notes/NotesPanel.svelte";
@@ -717,6 +718,7 @@
       <button type="button" class="quick-open-trigger" onclick={showSearch}>
         Search <kbd>⌘⇧F</kbd>
       </button>
+      <SettingsMenu />
     </div>
   </header>
 
