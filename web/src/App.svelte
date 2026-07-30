@@ -35,14 +35,11 @@
   import ScaffoldModal from "./map-room/ScaffoldModal.svelte";
   import { scaffoldWorkspace, type Scaffold } from "./map-room/scaffold";
   import SettingsMenu from "./settings/SettingsMenu.svelte";
-  import { settings } from "./settings/settings.svelte";
+  import { settings, persistSettings, type ContextDock } from "./settings/settings.svelte";
   import DocumentView from "./editor/DocumentView.svelte";
   import NoteModal from "./notes/NoteModal.svelte";
-  import NotesPanel from "./notes/NotesPanel.svelte";
-  import RelationshipsPanel from "./relationships/RelationshipsPanel.svelte";
-  import GitPanel from "./git/GitPanel.svelte";
   import RecoveryPrompt from "./editor/RecoveryPrompt.svelte";
-  import Outline from "./components/Outline.svelte";
+  import ContextPanel from "./components/ContextPanel.svelte";
   import StatusBar from "./components/StatusBar.svelte";
   import TabStrip from "./components/TabStrip.svelte";
   import SearchPanel from "./search/SearchPanel.svelte";
@@ -108,15 +105,27 @@
   }
   /** Which context-panel tab is showing: outline, notes, links, or git. */
   let contextTab = $state<"outline" | "notes" | "links" | "git">("outline");
+  /** The context panel is popped out into a window (transient, not persisted). */
+  let contextPopped = $state(false);
   /** Bumped to make the notes panel re-read after a create or delete. */
   let notesReload = $state(0);
   /** Bumped when the corpus changes, so the links panel refreshes backlinks. */
   let relationshipsGen = $state(0);
+
+  function setDock(dock: ContextDock): void {
+    settings.contextDock = dock;
+    persistSettings();
+  }
   let tabView = $state<Record<string, { mode: ViewMode; previewScroll: number; sourceLine: number }>>({});
   let dirtyDocs = $state<Record<string, boolean>>({});
   let recent = $state<string[]>([]);
   let closedTabs = $state<string[]>([]);
   let layout = $state<SessionLayout>({ navigation: true, context: true, search: false });
+
+  // Where the context panel is placed. The dock (right/bottom) is a saved
+  // preference; popping out is a transient window on top of the docked position.
+  const showRightContext = $derived(layout.context && settings.contextDock === "right" && !contextPopped);
+  const showBottomContext = $derived(layout.context && settings.contextDock === "bottom" && !contextPopped);
 
   /** Set when a document is opened from a search result (spec 04 section 8). */
   let highlightLine = $state<number | null>(null);
@@ -534,6 +543,10 @@
   }
 
   function onkeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && contextPopped) {
+      contextPopped = false;
+      return;
+    }
     const meta = event.metaKey || event.ctrlKey;
     if (!meta) return;
     const key = event.key.toLowerCase();
@@ -723,7 +736,7 @@
     </div>
   </header>
 
-  <div class="body">
+  <div class="body" class:two-col={!showRightContext}>
     <nav class="panel navigation" aria-label="Workspace navigation">
       <div class="nav-switch" role="group" aria-label="Navigation view">
         <button
@@ -856,74 +869,18 @@
       {/if}
     </main>
 
-    {#if layout.context}
+    {#if showRightContext}
       <aside class="panel context" aria-label="Context panel">
-        <div class="nav-switch" role="group" aria-label="Context view">
-          <button
-            type="button"
-            class:active={contextTab === "outline"}
-            aria-pressed={contextTab === "outline"}
-            onclick={() => (contextTab = "outline")}
-          >
-            Outline
-          </button>
-          <button
-            type="button"
-            class:active={contextTab === "notes"}
-            aria-pressed={contextTab === "notes"}
-            onclick={() => (contextTab = "notes")}
-          >
-            Notes
-          </button>
-          <button
-            type="button"
-            class:active={contextTab === "links"}
-            aria-pressed={contextTab === "links"}
-            onclick={() => (contextTab = "links")}
-          >
-            Links
-          </button>
-          {#if workspace?.capabilities.git}
-            <button
-              type="button"
-              class:active={contextTab === "git"}
-              aria-pressed={contextTab === "git"}
-              onclick={() => (contextTab = "git")}
-            >
-              Git
-            </button>
-          {/if}
-        </div>
-
-        {#if contextTab === "outline"}
-          {#if activeDoc}
-            <Outline outline={activeDoc.outline} />
-          {:else}
-            <p class="pending">Open a document to see its outline.</p>
-          {/if}
-        {:else if contextTab === "notes"}
-          <NotesPanel
-            generation={workspaceGeneration + notesReload}
-            activeId={noteModal?.id ?? null}
-            onopen={openNoteModal}
-            onnew={openNewNote}
-            onopenlink={(link) => void openLink(link)}
-          />
-        {:else if contextTab === "links"}
-          <RelationshipsPanel
-            documentId={activeId}
-            generation={workspaceGeneration + relationshipsGen}
-            onopen={(id) => void open(id)}
-          />
-        {:else}
-          <GitPanel
-            documentId={activeId}
-            generation={workspaceGeneration + relationshipsGen}
-          />
-        {/if}
+        {@render contextPanel()}
       </aside>
     {/if}
   </div>
+
+  {#if showBottomContext}
+    <div class="context-bottom" aria-label="Context panel">
+      {@render contextPanel()}
+    </div>
+  {/if}
 
   <StatusBar {workspace} document={activeDoc} state={load.kind} index={indexStatus} />
 </div>
@@ -956,11 +913,48 @@
   />
 {/if}
 
+<!-- The context panel, rendered once and placed by the branches above (right
+     aside / bottom strip) or here as a pop-out window. -->
+{#snippet contextPanel()}
+  <ContextPanel
+    gitEnabled={workspace?.capabilities.git ?? false}
+    tab={contextTab}
+    ontab={(t) => (contextTab = t)}
+    {activeDoc}
+    notesGeneration={workspaceGeneration + notesReload}
+    linksGeneration={workspaceGeneration + relationshipsGen}
+    {activeId}
+    noteActiveId={noteModal?.id ?? null}
+    onopen={(id) => void open(id)}
+    onopennote={openNoteModal}
+    onnewnote={openNewNote}
+    onopenlink={(link) => void openLink(link)}
+    dock={settings.contextDock}
+    popped={contextPopped}
+    ondock={setDock}
+    onpopout={() => (contextPopped = true)}
+    onclose={() => (contextPopped = false)}
+  />
+{/snippet}
+
+{#if layout.context && contextPopped}
+  <div class="context-modal-overlay">
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="ctx-backdrop" onclick={() => (contextPopped = false)}></div>
+    <div class="context-modal" role="dialog" aria-modal="true" aria-label="Context panel">
+      {@render contextPanel()}
+    </div>
+  </div>
+{/if}
+
 <style>
   .shell {
     display: grid;
-    grid-template-rows: auto 1fr auto;
+    /* command bar, body, optional bottom-docked context, status bar. */
+    grid-template-rows: auto 1fr auto auto;
     height: 100%;
+    min-height: 0;
   }
 
   .command-bar {
@@ -1058,6 +1052,49 @@
     min-height: 0;
   }
 
+  /* No right column when the context panel is docked bottom, popped out, or hidden. */
+  .body.two-col {
+    grid-template-columns: 17rem 1fr;
+  }
+
+  /* The context panel docked along the bottom: full width, its own scroll. */
+  .context-bottom {
+    height: 40vh;
+    min-height: 12rem;
+    padding: 0.75rem 1rem;
+    border-top: 1px solid var(--line);
+    background: var(--surface-panel);
+    overflow: hidden;
+  }
+
+  .context-modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2.5rem;
+  }
+
+  .ctx-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgb(0 0 0 / 45%);
+  }
+
+  .context-modal {
+    position: relative;
+    width: min(72rem, 100%);
+    height: min(48rem, 100%);
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--surface-panel);
+    box-shadow: 0 12px 48px rgb(0 0 0 / 45%);
+    overflow: hidden;
+  }
+
   .panel {
     padding: 1rem 0.5rem;
     background: var(--surface-panel);
@@ -1074,6 +1111,8 @@
   .context {
     border-left: 1px solid var(--line);
     padding: 1rem;
+    /* The panel scrolls its own body, so the column does not double-scroll. */
+    overflow: hidden;
   }
 
   .pending {
