@@ -45,6 +45,11 @@
     if (index.state === "disabled") return "muted";
     return "ok";
   });
+
+  // Git is a read-only capability the workspace either exposes or does not
+  // (spec 04 section 2). It follows the workspace's declared capability rather
+  // than a build-time placeholder.
+  const gitLabel = $derived(workspace?.capabilities.git ? "Git: enabled" : "Git: off");
 </script>
 
 <footer class="status-bar">
@@ -66,7 +71,7 @@
 
   <span class="spacer"></span>
   <span class="field {indexTone}" role="status">{indexLabel}</span>
-  <span class="field muted">Git: not built (Phase 5)</span>
+  <span class="field muted">{gitLabel}</span>
 </footer>
 
 <style>

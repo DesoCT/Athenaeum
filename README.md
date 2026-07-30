@@ -62,6 +62,18 @@ a disposable cache: deleting it loses nothing.
 
 ![Workspace search](docs/screenshots/search.png)
 
+Annotations. Comments anchored to a selection or heading, personal or shared,
+shown in the margin — and never written into your Markdown. They repair
+themselves after edits and detach rather than move when a match is lost.
+
+![Annotations in the margin](docs/screenshots/annotations.png)
+
+Read-only Git. Working-tree diff, history, and blame for the open document,
+through an allow-list that can reach no mutating command. Unresolved comments
+and changed files also surface on the Map Room home.
+
+![Read-only Git panel](docs/screenshots/git.png)
+
 ## Requirements
 
 The installed binary needs nothing but itself. These are for building from source:
