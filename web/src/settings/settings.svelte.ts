@@ -20,6 +20,7 @@ export type AnnotateTrigger = "button" | "popover" | "off";
 export type Theme = "system" | "light" | "dark";
 export type InterfaceSize = "small" | "default" | "large";
 export type Visibility = "personal" | "shared";
+export type ContextDock = "right" | "bottom";
 
 export interface Settings {
   defaultView: DefaultView;
@@ -29,6 +30,7 @@ export interface Settings {
   interfaceSize: InterfaceSize;
   autosave: boolean;
   defaultVisibility: Visibility;
+  contextDock: ContextDock;
 }
 
 const STORAGE_KEY = "athenaeum.settings.v1";
@@ -45,6 +47,7 @@ const defaults: Settings = {
   // Explicit save stays the default (D-012); autosave is opt-in.
   autosave: false,
   defaultVisibility: "personal",
+  contextDock: "right",
 };
 
 function loadInitial(): Settings {

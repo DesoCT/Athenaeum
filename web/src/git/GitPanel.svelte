@@ -165,7 +165,7 @@
   .diff {
     margin: 0; padding: 0.4rem; border: 1px solid var(--line-strong); border-radius: var(--radius);
     background: var(--surface-panel); font-family: var(--font-mono); font-size: 0.68rem;
-    line-height: 1.35; overflow-x: auto; max-height: 18rem; white-space: pre;
+    line-height: 1.35; overflow-x: auto; max-height: 60vh; white-space: pre;
   }
   .diff .line { display: block; }
   .diff .add { color: #3f8a5c; }
@@ -181,7 +181,7 @@
     padding: 0.25rem 0.6rem; border: 1px solid var(--line-strong); border-radius: var(--radius);
     background: var(--surface-raised); color: var(--text-secondary); font: inherit; font-size: 0.75rem; cursor: pointer;
   }
-  .blame { display: flex; flex-direction: column; max-height: 18rem; overflow-y: auto; font-family: var(--font-mono); font-size: 0.68rem; }
+  .blame { display: flex; flex-direction: column; max-height: 60vh; overflow-y: auto; font-family: var(--font-mono); font-size: 0.68rem; }
   .blame-line { display: flex; gap: 0.5rem; padding: 0.05rem 0; }
   .blame-hash { color: var(--accent); flex-shrink: 0; }
   .blame-num { color: var(--text-muted); width: 2rem; text-align: right; flex-shrink: 0; }
