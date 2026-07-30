@@ -40,6 +40,7 @@
   import NoteModal from "./notes/NoteModal.svelte";
   import RecoveryPrompt from "./editor/RecoveryPrompt.svelte";
   import ContextPanel from "./components/ContextPanel.svelte";
+  import Logo from "./components/Logo.svelte";
   import StatusBar from "./components/StatusBar.svelte";
   import TabStrip from "./components/TabStrip.svelte";
   import SearchPanel from "./search/SearchPanel.svelte";
@@ -688,6 +689,7 @@
   <div class="shell picker-shell">
     <header class="command-bar">
       <div class="identity">
+        <Logo />
         <span class="product">Athenaeum</span>
         <span class="separator" aria-hidden="true">/</span>
         <span class="workspace muted">select a workspace</span>
@@ -707,6 +709,7 @@
 <div class="shell">
   <header class="command-bar">
     <div class="identity">
+      <Logo />
       <span class="product">Athenaeum</span>
       <span class="separator" aria-hidden="true">/</span>
       <span class="workspace">{workspace?.name ?? "—"}</span>
@@ -969,8 +972,12 @@
 
   .identity {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.5rem;
+  }
+
+  .identity :global(.logo) {
+    color: var(--accent);
   }
 
   .product {
