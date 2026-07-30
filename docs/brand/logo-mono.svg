@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 118" role="img" aria-label="Athenaeum">
+  <g fill="currentColor">
+    <polygon points="50,0 0,26 100,26"/>
+    <rect x="36" y="36" width="8" height="62"/>
+    <rect x="56" y="36" width="8" height="62"/>
+    <rect x="22" y="50" width="56" height="8"/>
+    <rect x="22" y="74" width="56" height="8"/>
+    <rect x="16" y="104" width="68" height="6"/>
+    <rect x="8" y="112" width="84" height="6"/>
+  </g>
+</svg>

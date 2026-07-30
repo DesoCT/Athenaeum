@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/brand/lockup.svg" alt="Athenaeum — markdown command center" width="360" />
+</p>
+
 # Athenaeum
 
 **A local-first command centre for your Markdown.** Read, edit, search,

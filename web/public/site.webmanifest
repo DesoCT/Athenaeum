@@ -1,0 +1,13 @@
+{
+  "name": "Athenaeum",
+  "short_name": "Athenaeum",
+  "description": "A local-first command centre for your Markdown.",
+  "icons": [
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any" },
+    { "src": "/app-icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any maskable" }
+  ],
+  "theme_color": "#14171c",
+  "background_color": "#14171c",
+  "display": "standalone",
+  "start_url": "/"
+}
