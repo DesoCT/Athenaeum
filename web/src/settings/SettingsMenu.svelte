@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { settings, persistSettings, type DefaultView, type AnnotateTrigger } from "./settings.svelte";
+  import {
+    settings,
+    persistSettings,
+    applyEnvironment,
+    type DefaultView,
+    type AnnotateTrigger,
+    type Theme,
+    type InterfaceSize,
+    type Visibility,
+  } from "./settings.svelte";
 
   let open = $state(false);
 
@@ -15,6 +24,24 @@
     settings.wrapLines = !settings.wrapLines;
     persistSettings();
   }
+  function setTheme(t: Theme): void {
+    settings.theme = t;
+    persistSettings();
+    applyEnvironment();
+  }
+  function setSize(s: InterfaceSize): void {
+    settings.interfaceSize = s;
+    persistSettings();
+    applyEnvironment();
+  }
+  function toggleAutosave(): void {
+    settings.autosave = !settings.autosave;
+    persistSettings();
+  }
+  function setVisibility(v: Visibility): void {
+    settings.defaultVisibility = v;
+    persistSettings();
+  }
 
   const views: { value: DefaultView; label: string }[] = [
     { value: "split", label: "Split" },
@@ -25,6 +52,20 @@
     { value: "button", label: "Show a button", hint: "A small Comment button by the selection" },
     { value: "popover", label: "Open immediately", hint: "The comment form opens on selection" },
     { value: "off", label: "Off", hint: "Selecting never starts a comment" },
+  ];
+  const themes: { value: Theme; label: string }[] = [
+    { value: "system", label: "System" },
+    { value: "light", label: "Light" },
+    { value: "dark", label: "Dark" },
+  ];
+  const sizes: { value: InterfaceSize; label: string }[] = [
+    { value: "small", label: "Small" },
+    { value: "default", label: "Default" },
+    { value: "large", label: "Large" },
+  ];
+  const visibilities: { value: Visibility; label: string }[] = [
+    { value: "personal", label: "Personal" },
+    { value: "shared", label: "Shared" },
   ];
 </script>
 
@@ -49,6 +90,28 @@
     <div class="panel" role="menu">
       <p class="panel-title">Settings</p>
       <p class="panel-note">These preferences are saved in this browser.</p>
+
+      <fieldset class="group">
+        <legend>Theme</legend>
+        <div class="segmented" role="group">
+          {#each themes as t}
+            <button type="button" class:active={settings.theme === t.value} onclick={() => setTheme(t.value)}>
+              {t.label}
+            </button>
+          {/each}
+        </div>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend>Interface size</legend>
+        <div class="segmented" role="group">
+          {#each sizes as s}
+            <button type="button" class:active={settings.interfaceSize === s.value} onclick={() => setSize(s.value)}>
+              {s.label}
+            </button>
+          {/each}
+        </div>
+      </fieldset>
 
       <fieldset class="group">
         <legend>Default view</legend>
@@ -82,6 +145,22 @@
       </fieldset>
 
       <fieldset class="group">
+        <legend>New comment visibility</legend>
+        <div class="segmented" role="group">
+          {#each visibilities as v}
+            <button type="button" class:active={settings.defaultVisibility === v.value} onclick={() => setVisibility(v.value)}>
+              {v.label}
+            </button>
+          {/each}
+        </div>
+        <p class="group-hint">Personal stays out of the repository; shared is committable.</p>
+      </fieldset>
+
+      <fieldset class="group">
+        <label class="check">
+          <input type="checkbox" checked={settings.autosave} onchange={toggleAutosave} />
+          <span>Autosave a short while after you stop typing</span>
+        </label>
         <label class="check">
           <input type="checkbox" checked={settings.wrapLines} onchange={toggleWrap} />
           <span>Wrap long lines in the editor by default</span>

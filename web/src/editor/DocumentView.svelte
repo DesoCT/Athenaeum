@@ -145,6 +145,30 @@
     }
   }
 
+  // Optional autosave (settings.autosave). It is a convenience over explicit
+  // save, never a replacement for its guarantees: it holds off while a conflict
+  // is being resolved and when the file has changed on disk under the buffer,
+  // leaving those to the manual, version-checked path.
+  const AUTOSAVE_DEBOUNCE_MS = 1200;
+  let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function scheduleAutosave(): void {
+    if (!settings.autosave || !canEdit) return;
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => {
+      if (dirty && !changedOnDisk && saveState.kind !== "conflict" && saveState.kind !== "saving") {
+        void save();
+      }
+    }, AUTOSAVE_DEBOUNCE_MS);
+  }
+
+  function cancelAutosave(): void {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
+  }
+
   /**
    * The server content the buffer was last seeded from.
    *
@@ -247,12 +271,14 @@
       saveState = next === doc.content ? { kind: "saved" } : { kind: "dirty" };
     }
     if (next === doc.content) {
-      // Back to the saved text: there is nothing left to recover.
+      // Back to the saved text: there is nothing left to recover or autosave.
       cancelRecovery();
+      cancelAutosave();
       void discardRecovery(doc.id).catch(() => {});
       return;
     }
     scheduleRecovery(next);
+    scheduleAutosave();
   }
 
   async function save(force = false): Promise<void> {
@@ -271,6 +297,7 @@
       // The text is on disk, so the recovery copy is no longer needed
       // (spec 03 section 8 step 9).
       cancelRecovery();
+      cancelAutosave();
       void discardRecovery(doc.id).catch(() => {});
       // Refresh metadata (outline, size) without touching the buffer.
       await onreload();

@@ -41,6 +41,36 @@
   color-scheme: dark;
 }
 
+/*
+ * Light theme (settings → Theme). The JS applier sets data-theme to the
+ * resolved value ("light" or "dark"), so "system" needs no media query here.
+ * Contrast pairs continue to target WCAG 2.2 AA (requirement N5).
+ */
+:root[data-theme="light"] {
+  --surface-table: #e9e5dd;
+  --surface-panel: #f1ede5;
+  --surface-raised: #faf7f0;
+
+  --surface-paper: #fbf8f2;
+  --ink: #201e1a;
+
+  --text-primary: #262320;
+  --text-secondary: #57534c;
+  --text-muted: #837e75;
+
+  --line: #d9d3c8;
+  --line-strong: #bfb8ab;
+
+  --accent: #8f7214;
+  --ok: #3f8a5c;
+  --warn: #9a6417;
+  --danger: #b0473c;
+
+  --focus: #2b6cb0;
+
+  color-scheme: light;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -55,7 +85,8 @@ body {
   background: var(--surface-table);
   color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: 15px;
+  /* Relative to the root font size so the interface-size setting scales it. */
+  font-size: 0.9375rem;
   line-height: 1.5;
 }
 
